@@ -1,0 +1,2 @@
+wallclock,clientId,name,label,clockResolution_ms,frameInterval_median_ms,frameInterval_p95_ms,refreshHz_est,rttMedian_ms,rttP95_ms,rttJitter_ms,dpr,cores,screen
+2026-09-12T15:44:57.323Z,c1,mac60,mac-chrome-60hz,0.09999996423721313,16.6,17.3,60,1.5,2.5,0.7,2,12,1512x982

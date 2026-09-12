@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>reaction-lab — SET2-4 同期・公平性 実測</title>
+<style>
+  :root {
+    --bg: #14141a; --panel: #1e1e28; --line: #32323f;
+    --fg: #e8e8ef; --muted: #9a9aae;
+    --win: #4ec98a; --lose: #e5695f; --draw: #d8b34a; --void: #7a7a8c; --accent: #8b7bf0;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.6 system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    padding: 12px; max-width: 900px; margin-inline: auto;
+  }
+  h1 { font-size: 15px; margin: 0 0 8px; font-weight: 600; }
+  h1 small { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    font-size: 12px; color: var(--muted); margin-bottom: 10px;
+  }
+  .bar b { color: var(--fg); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--lose); display: inline-block; }
+  .dot.on { background: var(--win); }
+
+  #stage {
+    user-select: none; touch-action: manipulation; cursor: pointer;
+    min-height: 42vh; border-radius: 14px; border: 2px solid var(--line);
+    background: var(--panel); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; text-align: center;
+    transition: background-color .06s linear, border-color .06s linear;
+  }
+  #stage.armed  { background: #2a2438; border-color: #4a3f6b; }
+  #stage.cue    { background: #1f4d35; border-color: var(--win); }
+  #stage.result { background: #23232f; }
+  #face { font-size: clamp(56px, 18vw, 110px); line-height: 1; }
+  #phase { font-size: clamp(16px, 4.5vw, 22px); font-weight: 600; }
+  #sub { color: var(--muted); font-size: 13px; padding-inline: 16px; white-space: pre-line; }
+  #verdict { font-size: clamp(20px, 6vw, 30px); font-weight: 700; }
+  .win { color: var(--win); } .lose { color: var(--lose); }
+  .draw { color: var(--draw); } .void { color: var(--void); }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
+  button {
+    font: inherit; font-weight: 600; padding: 10px 16px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--fg); cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .4; cursor: default; }
+  label.chk {
+    display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 13px;
+  }
+  input[type=number] {
+    font: inherit; width: 72px; padding: 6px 8px; border-radius: 8px;
+    border: 1px solid var(--line); background: #14141a; color: var(--fg);
+  }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
+  .card h2 { font-size: 12px; margin: 0 0 8px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+  .kv { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+  .kv span:first-child { color: var(--muted); }
+  .kv b { font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .warn { color: var(--draw); }
+</style>
+</head>
+<body>
+
+<h1>reaction-lab <small>SET2-4 同期・公平性の実測</small></h1>
+
+<div class="bar">
+  <span><span class="dot" id="conn"></span> <b id="connText">接続中…</b></span>
+  <span>room <b id="roomId">-</b></span>
+  <span>mode <b id="mode">-</b></span>
+  <span>me <b id="me">-</b></span>
+  <span>相手 <b id="peer">-</b></span>
+  <span>人工遅延 <b id="delays">-</b></span>
+</div>
+
+<div id="stage" class="idle">
+  <div id="face">🥺</div>
+  <div id="phase">接続中</div>
+  <div id="verdict"></div>
+  <div id="sub">合図（緑）が出たらタップ。先に押すと負け。</div>
+</div>
+
+<div class="controls">
+  <button id="ready" class="primary" disabled>準備する</button>
+  <label class="chk"><input type="checkbox" id="auto"> 自動タップ <input type="number" id="autoMs" value="200" min="0" max="2000" step="10"> ms</label>
+  <label class="chk"><input type="checkbox" id="forge"> 申告値を偽造（R=120ms）</label>
+  <button id="calib">キャリブレーション実行</button>
+  <button id="dl">ローカルCSV</button>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>計測系（§7.1）</h2>
+    <div class="kv"><span>performance.now() 分解能</span><b id="mRes">—</b></div>
+    <div class="kv"><span>フレーム間隔 中央値</span><b id="mFrame">—</b></div>
+    <div class="kv"><span>フレーム間隔 p95</span><b id="mFrameP95">—</b></div>
+    <div class="kv"><span>実効リフレッシュレート</span><b id="mHz">—</b></div>
+  </div>
+  <div class="card">
+    <h2>通信（§7.3）</h2>
+    <div class="kv"><span>RTT 中央値</span><b id="mRtt">—</b></div>
+    <div class="kv"><span>RTT p95</span><b id="mRttP95">—</b></div>
+    <div class="kv"><span>ジッタ</span><b id="mJit">—</b></div>
+    <div class="kv"><span>サンプル数</span><b id="mRttN">—</b></div>
+  </div>
+  <div class="card">
+    <h2>直近ラウンドの内訳</h2>
+    <div class="kv"><span>GO受信→描画処理</span><b id="mRecvPaint">—</b></div>
+    <div class="kv"><span>入力→ハンドラ</span><b id="mInHandler">—</b></div>
+    <div class="kv"><span>サーバー経過時間</span><b id="mElapsed">—</b></div>
+    <div class="kv"><span>整合性 residual</span><b id="mResidual">—</b></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:10px">
+  <h2>ラウンド履歴</h2>
+  <div class="scroll">
+    <table id="log">
+      <thead><tr>
+        <th>#</th><th>結果</th><th>R</th><th>相手R</th><th>差</th>
+        <th>recv→paint</th><th>frame</th><th>elapsed</th><th>residual</th><th>理由</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <p class="note">
+    自動タップは setTimeout のジッタを含むため、計測系そのものの分散とは一致しない。
+    §7.1 では分解能・フレーム間隔・recv→paint の各分布を主に見ること。
+  </p>
+</div>
+
+<p class="note">
+  URLパラメータ: <code>?room=lab&amp;mode=duel|solo&amp;name=自分&amp;label=端末メモ&amp;delayUp=0&amp;delayDown=0</code><br>
+  <span class="warn">人工遅延（delayUp / delayDown）はサーバー側で片道遅延を模したもので、実回線の代用。実測では実機・実回線でも必ず確認すること。</span>
+</p>
+
+<script src="lab.js"></script>
+</body>
+</html>
