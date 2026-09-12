@@ -87,7 +87,9 @@ const st = {
 };
 const rtts = [];
 const localRows = [];
-let ws = null, pingSeq = 0;
+let ws = null, pingSeq = 0, eventSeq = 0;
+// サーバーが発行する識別子。古いラウンド宛の入力を捨てるために毎回載せる（SET2-2 §2）
+let matchId = null;
 const pendingPings = new Map();
 
 document.addEventListener('visibilitychange', () => {
@@ -126,7 +128,11 @@ setInterval(renderMetrics, 500);
 
 // ---------------------------------------------------------------- 通信
 
-function send(msg) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg)); }
+function send(msg) {
+  if (!ws || ws.readyState !== 1) return;
+  // eventId は接続ごとの連番。再送による二重処理を防ぐ（SET2-2 §5.2）
+  ws.send(JSON.stringify({ eventId: ++eventSeq, ...msg }));
+}
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -160,11 +166,20 @@ function onMessage(m) {
     case 'WELCOME':
       el.me.textContent = `${params.name} (${m.clientId})`;
       break;
+    case 'MATCHED':
+      matchId = m.matchId;
+      el.peer.textContent = (m.peer ?? []).join(', ') || '—';
+      break;
+    case 'PEER_LEFT':
+      el.peer.textContent = '—';
+      setPhase('idle', '相手が離脱しました', '新しい相手を待っています。');
+      break;
     case 'FULL':
       setPhase('idle', 'ルームが満員です', `定員 ${m.capacity} 人。別の room 名を使うこと。`);
       break;
     case 'STATE': {
-      const others = m.room.members.filter((x) => !el.me.textContent.includes(x.id));
+      if (m.matchId) matchId = m.matchId;
+      const others = (m.members ?? []).filter((x) => !el.me.textContent.includes(x.id));
       el.peer.textContent = others.length ? others.map((o) => o.name + (o.ready ? '(準備済)' : '')).join(', ') : '—';
       if (st.phase === 'idle' || st.phase === 'waiting' || st.phase === 'result') {
         el.ready.disabled = false;
@@ -173,6 +188,7 @@ function onMessage(m) {
       break;
     }
     case 'ARMED':
+      if (m.matchId) matchId = m.matchId;
       st.roundId = m.roundId;
       st.tRecv = st.tPaint = st.tDisplay = null;
       st.extraTaps = 0;
@@ -195,6 +211,10 @@ function onMessage(m) {
       }
       break;
     }
+    case 'SPING':
+      // サーバーが RTT を自分で測るための応答。クライアント側の計測とは別物
+      send({ type: 'SPONG', seq: m.seq });
+      break;
     case 'CALIB_OK':
       el.calib.textContent = 'キャリブレーション記録済み';
       setTimeout(() => { el.calib.textContent = 'キャリブレーション実行'; }, 1500);
@@ -248,7 +268,7 @@ function inputTime(e, fallback) {
 function handleInput(tInput, tHandler, synthetic) {
   if (st.phase === 'armed' || st.phase === 'cuePending') {
     // §5 ケース3: 合図の表示前に入力した = フライング
-    send({ type: 'TAP', roundId: st.roundId, flying: true, synthetic, rtt: rttStats() });
+    send({ type: 'TAP', matchId, roundId: st.roundId, flying: true, synthetic, rtt: rttStats() });
     setPhase('sent', '送信済み', 'フライングを申告しました。');
     return;
   }
@@ -257,7 +277,7 @@ function handleInput(tInput, tHandler, synthetic) {
   let R = tInput - st.tDisplay;
   if (R < 0) {
     // 描画処理は走ったが、推定表示時刻より前に入力された
-    send({ type: 'TAP', roundId: st.roundId, flying: true, synthetic, rtt: rttStats() });
+    send({ type: 'TAP', matchId, roundId: st.roundId, flying: true, synthetic, rtt: rttStats() });
     setPhase('sent', '送信済み', 'フライングを申告しました。');
     return;
   }
@@ -265,7 +285,7 @@ function handleInput(tInput, tHandler, synthetic) {
   if (forged) R = 120; // §7.4 整合性検査が偽造を捕まえるかの確認用
 
   send({
-    type: 'TAP', roundId: st.roundId, flying: false, R,
+    type: 'TAP', matchId, roundId: st.roundId, flying: false, R,
     recvToPaint: st.tPaint - st.tRecv,
     inputToHandler: tHandler - tInput,
     frameInterval: st.frameInterval,
@@ -343,7 +363,7 @@ const fmt = (v) => (typeof v === 'number' && isFinite(v) ? v.toFixed(1) : '—')
 el.ready.addEventListener('click', () => {
   el.ready.disabled = true;
   setPhase('waiting', '相手を待っています', params.mode === 'solo' ? '' : '双方が準備するとラウンドが始まる。');
-  send({ type: 'READY' });
+  send({ type: 'READY', matchId });
 });
 
 el.calib.addEventListener('click', () => {

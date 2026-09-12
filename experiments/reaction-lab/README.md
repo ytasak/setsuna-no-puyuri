@@ -1,9 +1,32 @@
 # reaction-lab
 
-SET2-4「同期・公平性」の実測用プロトタイプ。**使い捨て**であり、本番構成とは独立している。
-ここでの実装方式（Node + ws）は SET2-2 の技術選定を拘束しない。
+SET2-4「同期・公平性」の実測と、SET2-2「リアルタイム対戦」の検証用プロトタイプ。
 
-判定仕様の本体は [`../../docs/set2-4-sync-fairness.md`](../../docs/set2-4-sync-fairness.md)。
+判定仕様の本体は [`../../docs/set2-4-sync-fairness.md`](../../docs/set2-4-sync-fairness.md)、
+状態遷移とメッセージ仕様は [`../../docs/set2-2-realtime-match.md`](../../docs/set2-2-realtime-match.md)。
+
+## 構成
+
+```
+core/match.js        … 状態遷移と判定。I/O を持たない。時計とランダムは外から注入する
+core/match.test.mjs  … 偽の時計による単体テスト（31件）
+adapters/node-ws.js  … Node + ws アダプタ。人工遅延・CSV 記録・サーバー発 PING
+test/e2e.test.mjs    … WebSocket 越しの結合テスト（12件）
+server.js            … エントリポイント
+public/              … 計測用クライアント
+```
+
+core を I/O から切り離してあるのは、Cloudflare Durable Objects など別の土台にも載せられるようにするため
+（SET2-2 §9.5）。アダプタを書き換えれば core はそのまま使える。
+
+## テスト
+
+```bash
+npm test
+```
+
+43件、約12秒。実時間を待たないよう単体テストは偽の時計で駆動し、
+結合テストはサーバーを同一プロセスで起動する。
 
 ## 起動
 
