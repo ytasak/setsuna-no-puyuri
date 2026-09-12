@@ -298,7 +298,12 @@ function onResult(m) {
   const mine = m.players.find((p) => p.id === meId) || m.players[0];
   const other = m.players.find((p) => p.id !== mine.id);
 
-  setPhase('result', RESULT_LABEL[mine.result] ?? mine.result, m.reason);
+  // 申告値を信用できなかった場合は理由を伏せずに出すが、不正とは書かない（§5.1）
+  const notes = [];
+  if (mine.Rsource === 'server-estimate') notes.push('この端末の計測値は使われませんでした');
+  if (m.recorded === false) notes.push('この試合は記録されません');
+  setPhase('result', RESULT_LABEL[mine.result] ?? mine.result,
+    notes.length ? `${m.reason}\n${notes.join(' / ')}` : m.reason);
   el.verdict.textContent = RESULT_LABEL[mine.result] ?? mine.result;
   el.verdict.className = mine.result;
   el.ready.disabled = false;
@@ -311,7 +316,8 @@ function onResult(m) {
 
   const diff = mine.R != null && other?.R != null ? Math.abs(mine.R - other.R) : null;
   const row = {
-    roundId: m.roundId, result: mine.result, R: mine.R, opponentR: other?.R ?? null, diff,
+    roundId: m.roundId, result: mine.result, R: mine.R, claimedR: mine.claimedR,
+    Rsource: mine.Rsource, recorded: m.recorded, opponentR: other?.R ?? null, diff,
     recvToPaint: mine.recvToPaint, inputToHandler: mine.inputToHandler,
     frameInterval: mine.frameInterval, serverElapsed: mine.serverElapsed, residual: mine.residual,
     reason: m.reason, w: m.w, ts: new Date().toISOString(),
@@ -359,7 +365,7 @@ el.calib.addEventListener('click', () => {
 });
 
 el.dl.addEventListener('click', () => {
-  const cols = ['ts', 'roundId', 'result', 'R', 'opponentR', 'diff', 'recvToPaint',
+  const cols = ['ts', 'roundId', 'result', 'R', 'claimedR', 'Rsource', 'recorded', 'opponentR', 'diff', 'recvToPaint',
     'inputToHandler', 'frameInterval', 'serverElapsed', 'residual', 'w', 'reason'];
   const csv = [cols.join(',')].concat(
     localRows.map((r) => cols.map((c) => {

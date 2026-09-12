@@ -46,8 +46,8 @@ const calibCsv = path.join(DATA_DIR, `calib-${stamp}.csv`);
 
 const ROUND_COLS = [
   'wallclock', 'roomId', 'roundId', 'mode', 'clientId', 'name', 'label',
-  'result', 'reason', 'R_ms', 'opponentR_ms', 'diff_ms',
-  'flying', 'noInput', 'disconnected', 'invalidReason', 'forged', 'synthetic', 'extraTaps',
+  'result', 'reason', 'R_ms', 'Rused_ms', 'Rsource', 'recorded', 'opponentR_ms', 'diff_ms',
+  'flying', 'noInput', 'disconnected', 'untrustedReason', 'forged', 'synthetic', 'extraTaps',
   'serverElapsed_ms', 'rttMedian_ms', 'rttP95_ms', 'rttJitter_ms', 'residual_ms',
   'recvToPaint_ms', 'inputToHandler_ms', 'frameInterval_ms', 'refreshHz_est',
   'visibilityOk', 'W_ms', 'delayUp_ms', 'delayDown_ms', 'ua',
@@ -226,6 +226,8 @@ function summarize(rec, round) {
     label: c.label,
     client: c,
     flying: !!tap?.flying,
+    // ケース9: 生理的下限未満。予測入力とみなしフライングと同層で扱う
+    tooFast: !tap?.flying && typeof tap?.R === 'number' && tap.R < cfg.rMin,
     R: tap?.R ?? null,
     noInput: !tap && !rec.disconnectedAt,
     disconnected: !!rec.disconnectedAt,
@@ -238,11 +240,16 @@ function summarize(rec, round) {
   };
 }
 
-/** §5 ケース9・10・11。無効試合であって不正の断定ではない */
-function invalidReason(p) {
-  if (p.flying || p.noInput || p.disconnected) return null;
+/**
+ * §5 ケース10・11。申告値を信用しない理由であって、不正の断定ではない。
+ *
+ * ケース9（R < R_min）はここに含めない。申告値が実際のタップ時刻と一致していても
+ * 100ms 未満なら「反応」ではなく予測入力なので、サーバー推定値への差し替えでは救えない。
+ * フライングと同じ扱い（tooFast）にする。
+ */
+function untrustedReason(p) {
+  if (p.flying || p.tooFast || p.noInput || p.disconnected) return null;
   if (p.R === null) return null;
-  if (p.R < cfg.rMin) return `生理的下限未満(R=${r2(p.R)}ms < ${cfg.rMin}ms)`;
   if (p.residual !== null && Math.abs(p.residual) > cfg.eps) {
     return `整合性違反(residual=${r2(p.residual)}ms)`;
   }
@@ -251,8 +258,29 @@ function invalidReason(p) {
 }
 
 /**
+ * 申告値が信用できない場合、サーバー側の推定値に差し替える（§5.3）。
+ *
+ * 試合を無効にしない。無効にすると、勝てない相手が意図的に違反を起こして
+ * 相手の勝ちを消し続けられる（グリーフィング）ため。
+ * かわりに R をサーバー推定値 serverElapsed − RTT で置き換える。
+ *   - 偽造しても実際のタップ時刻に引き戻されるので、不正の得がなくなる
+ *   - 誤検知された正直なプレイヤーは、residual 相当（実測 8〜31ms）のハンデで済む
+ * そのラウンドは戦績に記録しない。
+ */
+function applyTrust(p) {
+  p.untrusted = untrustedReason(p);
+  if (!p.untrusted) { p.Rused = p.R; p.Rsource = 'claimed'; return; }
+  const est = p.serverElapsed !== null && typeof p.rtt?.median === 'number'
+    ? p.serverElapsed - p.rtt.median
+    : null;
+  p.Rused = est ?? p.R; // 推定できなければ申告値のまま使う（判定不能にはしない）
+  p.Rsource = est !== null ? 'server-estimate' : 'claimed';
+}
+
+/**
  * docs/set2-4-sync-fairness.md §5 の判定。
- * 優先順位: 切断(GO前) > フライング > 切断(GO後) > 無効 > 無入力 > 同着 > 反応時間比較
+ * 優先順位: 切断(GO前) > フライング > 切断(GO後) > 無入力 > 同着 > 反応時間比較
+ * 申告値の信用検査は勝敗を止めず、R の差し替えとして効く（§5.3）。
  */
 function decide(a, b) {
   const out = (ra, rb, reason) => ({ [a.id]: ra, [b.id]: rb, reason });
@@ -261,21 +289,32 @@ function decide(a, b) {
   const win = (w, l, reason) =>
     w.id === a.id ? out('win', 'lose', reason) : out('lose', 'win', reason);
 
+  // 合図を見て反応していない入力。フライングと「速すぎる入力」を同じ層で扱う（ケース3・4・9）
+  const early = (p) => p.flying || p.tooFast;
+  const earlyLabel = (p) => (p.tooFast ? `反応が速すぎる(R=${r2(p.R)}ms)` : 'フライング');
+
   if (a.disconnectedBeforeGo || b.disconnectedBeforeGo) return voidMatch('切断(GO前)');       // ケース7
-  if (a.flying && b.flying) return draw('双方フライング');                                     // ケース4
-  if (a.flying) return win(b, a, 'フライング');                                                // ケース3
-  if (b.flying) return win(a, b, 'フライング');
+  if (early(a) && early(b)) return draw('双方フライング');                                     // ケース4
+  if (early(a)) return win(b, a, earlyLabel(a));                                              // ケース3・9
+  if (early(b)) return win(a, b, earlyLabel(b));
   if (a.disconnectedAfterGo && b.disconnectedAfterGo) return voidMatch('双方切断(GO後)');
   if (a.disconnectedAfterGo) return win(b, a, '切断による不戦勝');                             // ケース8
   if (b.disconnectedAfterGo) return win(a, b, '切断による不戦勝');
 
-  const ia = invalidReason(a), ib = invalidReason(b);
-  if (ia || ib) return voidMatch(`無効試合: ${[ia, ib].filter(Boolean).join(' / ')}`);          // ケース9,10,11
   if (a.noInput && b.noInput) return draw('双方無入力');                                       // ケース6
   if (a.noInput) return win(b, a, '相手が無入力');                                             // ケース5
   if (b.noInput) return win(a, b, '相手が無入力');
-  if (Math.abs(a.R - b.R) <= cfg.tieBand) return draw(`同着(差${r2(Math.abs(a.R - b.R))}ms)`);  // ケース2
-  return a.R < b.R ? win(a, b, '反応が速い') : win(b, a, '反応が速い');                         // ケース1
+
+  // ケース9・10・11 は勝敗を止めず、R を差し替えて判定する（§5.3）
+  applyTrust(a); applyTrust(b);
+  const note = [a, b].filter((p) => p.untrusted)
+    .map((p) => `${p.name}: ${p.untrusted}→サーバー推定値で判定`).join(' / ');
+  const suffix = note ? `（${note}・戦績に記録しない）` : '';
+
+  if (Math.abs(a.Rused - b.Rused) <= cfg.tieBand) {
+    return draw(`同着(差${r2(Math.abs(a.Rused - b.Rused))}ms)${suffix}`);                       // ケース2
+  }
+  return a.Rused < b.Rused ? win(a, b, `反応が速い${suffix}`) : win(b, a, `反応が速い${suffix}`); // ケース1
 }
 
 function resolveRound(room, round) {
@@ -294,10 +333,15 @@ function resolveRound(room, round) {
   } else {
     // solo は勝敗をつけず、計測値だけを残す（§7.1 / §7.2 用）
     const p = players[0];
-    const inv = invalidReason(p);
-    reason = p.flying ? 'フライング' : p.noInput ? '無入力' : inv ? `無効試合: ${inv}` : '計測のみ';
-    verdict = { [p.id]: inv || p.flying || p.noInput ? 'void' : 'solo' };
+    applyTrust(p);
+    reason = p.flying ? 'フライング' : p.tooFast ? '反応が速すぎる' : p.noInput ? '無入力'
+      : p.untrusted ? `計測のみ（${p.untrusted}）` : '計測のみ';
+    verdict = { [p.id]: p.flying || p.tooFast || p.noInput ? 'void' : 'solo' };
   }
+
+  // 戦績に記録するか。申告値を信用できないラウンドと無効試合は記録しない（§5.3）
+  const recorded = !players.some((p) => p.untrusted) &&
+    !Object.values(verdict).some((v) => v === 'void');
 
   const wallclock = new Date().toISOString();
   for (const p of players) {
@@ -314,12 +358,15 @@ function resolveRound(room, round) {
       result: verdict[p.id],
       reason,
       R_ms: r2(p.R),
-      opponentR_ms: r2(other?.R ?? null),
-      diff_ms: p.R !== null && other?.R != null ? r2(Math.abs(p.R - other.R)) : null,
+      Rused_ms: r2(p.Rused ?? null),
+      Rsource: p.Rsource ?? '',
+      recorded,
+      opponentR_ms: r2(other?.Rused ?? other?.R ?? null),
+      diff_ms: p.Rused != null && other?.Rused != null ? r2(Math.abs(p.Rused - other.Rused)) : null,
       flying: p.flying,
       noInput: p.noInput,
       disconnected: p.disconnected,
-      invalidReason: invalidReason(p) ?? '',
+      untrustedReason: p.untrusted ?? '',
       forged: p.tap?.forged ?? '',
       synthetic: p.tap?.synthetic ?? '',
       extraTaps: p.tap?.extraTaps ?? 0,
@@ -345,10 +392,12 @@ function resolveRound(room, round) {
     roundId: round.id,
     reason,
     w: r2(round.w),
+    recorded,
     players: players.map((p) => ({
       id: p.id, name: p.name, result: verdict[p.id],
-      R: r2(p.R), flying: p.flying, noInput: p.noInput, disconnected: p.disconnected,
-      invalid: invalidReason(p), serverElapsed: r2(p.serverElapsed), residual: r2(p.residual),
+      R: r2(p.Rused ?? p.R), claimedR: r2(p.R), Rsource: p.Rsource ?? 'claimed',
+      flying: p.flying, noInput: p.noInput, disconnected: p.disconnected,
+      untrusted: p.untrusted ?? null, serverElapsed: r2(p.serverElapsed), residual: r2(p.residual),
       recvToPaint: r2(p.tap?.recvToPaint), frameInterval: r2(p.tap?.frameInterval),
     })),
   });
