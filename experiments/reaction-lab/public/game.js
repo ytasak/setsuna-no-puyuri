@@ -39,43 +39,154 @@ const sound = {
     if (this.ctx) return;
     try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { this.ctx = null; }
   },
-  // 斬撃。帯域を絞ったノイズを一瞬だけ
+  ok() { return this.on && this.ctx && this.ctx.state !== 'suspended'; },
+
+  /**
+   * 全部の音をここに通す。層を重ねると振幅が足し合わさって 1.0 を超えるので、
+   * まとめて下げておく。
+   *
+   * **コンプレッサーを挟んではいけない。** 一度試したが、
+   * Web Audio の DynamicsCompressor には固有の先読み遅延（Chrome で約6ms）があり、
+   * さらに立ち上がりを潰す。実測で合図の頭が 0ms から 20ms 先へずれ、
+   * 0〜5ms の振幅が完全に消えた。合図の音はアタックがすべてなので、
+   * 音量を稼ぐために transient を犠牲にする処理とは相性が最悪。
+   * 割れるなら各層のゲインを下げること。
+   */
+  master() {
+    if (!this._bus || this._bus.context !== this.ctx) {
+      const g = this.ctx.createGain();
+      g.gain.value = 0.62;
+      g.connect(this.ctx.destination);
+      this._bus = g;
+    }
+    return this._bus;
+  },
+
+  /**
+   * ノイズを1発作る。
+   * @param dur   長さ[秒]
+   * @param decay 減衰の鋭さ。大きいほど頭だけ残って尻が消える
+   */
+  noise(dur, decay) {
+    const c = this.ctx;
+    const len = Math.max(1, Math.floor(c.sampleRate * dur));
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    return src;
+  },
+
+  /**
+   * 減衰するゲイン。立ち上がりに ramp を使わないのは、鈍らせると「いつ鳴ったか」が
+   * 曖昧になるため。
+   *
+   * 落とす先を 0.0001 にすると -80dB 超の減衰になり、体感の長さが dur の 1/3 になる。
+   * -36dB まで落としてから切ることで、dur がそのまま「鳴っている長さ」になる。
+   */
+  env(v, dur, at) {
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(v, at);
+    g.gain.exponentialRampToValueAtTime(v * 0.015, at + dur);
+    g.gain.linearRampToValueAtTime(0, at + dur * 1.1);
+    return g;
+  },
+
+  /**
+   * 合図の音「ドンッ」
+   *
+   * 太鼓。低い胴の鳴りが主だが、それだけだと「いつ鳴ったか」が曖昧になる。
+   * 低音は耳が時間を捉えにくいので、バチが皮を叩く高めの音を頭に一瞬だけ置く。
+   * 実際の太鼓もこの2層でできている。合図として使う以上、頭の鋭さは外せない。
+   *
+   * 胴の高さを 60Hz 台まで下げると本物には近いが、スマホのスピーカーでは
+   * ほとんど再生されない。少し高めに置いて、倍音で太さを補う。
+   */
+  cue() {
+    if (!this.ok()) return;
+    const c = this.ctx, t = c.currentTime;
+    // ここを触ると音色が変わる
+    const HIT = 1800;   // バチが当たる音の帯域。上げると硬く、下げると鈍くなる
+    const BODY = 150;   // 胴の鳴りはじめの高さ。下げるほど大きな太鼓になる
+    const DROP = 72;    // 落ち着く高さ
+    const LEN = 0.24;   // 鳴っている長さ[秒]
+
+    // バチ。頭を 0ms に立てるためだけの層。短く切る。
+    // 帯域を絞りすぎるとエネルギーが痩せて胴鳴りに埋もれ、合図の頭が消える
+    const stick = this.noise(0.022, 1.2);
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = HIT; bp.Q.value = 0.45;
+    stick.connect(bp).connect(this.env(1.3, 0.02, t)).connect(this.master());
+    stick.start(t);
+
+    // 胴。張った皮が緩むぶん、ピッチが少し落ちる
+    const body = c.createOscillator(); body.type = 'sine';
+    body.frequency.setValueAtTime(BODY, t);
+    body.frequency.exponentialRampToValueAtTime(DROP, t + 0.09);
+    body.connect(this.env(0.58, LEN, t)).connect(this.master());
+    body.start(t); body.stop(t + LEN * 1.2);
+
+    // 倍音。小さいスピーカーでも胴の高さが伝わるように
+    const ov = c.createOscillator(); ov.type = 'triangle';
+    ov.frequency.setValueAtTime(BODY * 2, t);
+    ov.frequency.exponentialRampToValueAtTime(DROP * 2, t + 0.09);
+    ov.connect(this.env(0.15, LEN * 0.45, t)).connect(this.master());
+    ov.start(t); ov.stop(t + LEN);
+  },
+
+  /**
+   * 斬撃の音「バシィ」
+   *
+   *   バ … 低域の打撃。当たった瞬間の重さ
+   *   シィ … 高域の擦過。わずかに遅らせて、長めに伸ばして引く
+   *
+   * この2層をずらして重ねると「バシィ」になる。
+   * 片方だけだと「ドッ」か「シュッ」にしかならない。
+   */
   slash() {
     if (!this.ok()) return;
     const c = this.ctx, t = c.currentTime;
-    const len = Math.floor(c.sampleRate * 0.12);
-    const buf = c.createBuffer(1, len, c.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
-    const src = c.createBufferSource(); src.buffer = buf;
-    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 0.8;
-    const g = c.createGain(); g.gain.setValueAtTime(0.32, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
-    src.connect(bp).connect(g).connect(c.destination); src.start(t);
+
+    // 当たった瞬間の割れ。フィルタを通さない帯域を一瞬だけ置いて、頭を 0ms に立てる。
+    // 低域だけだとフィルタの応答で山が 15ms あたりにずれ、打撃が鈍る
+    const crack = this.noise(0.018, 1.6);
+    const cbp = c.createBiquadFilter(); cbp.type = 'bandpass'; cbp.frequency.value = 2400; cbp.Q.value = 0.6;
+    crack.connect(cbp).connect(this.env(0.5, 0.018, t)).connect(this.master());
+    crack.start(t);
+
+    // バ（打撃）
+    const hit = this.noise(0.1, 1.2);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 820;
+    hit.connect(lp).connect(this.env(0.7, 0.09, t)).connect(this.master());
+    hit.start(t);
+    // 胴鳴り。ピッチを落として重さを出す
+    const body = c.createOscillator(); body.type = 'sine';
+    body.frequency.setValueAtTime(230, t);
+    body.frequency.exponentialRampToValueAtTime(52, t + 0.11);
+    body.connect(this.env(0.33, 0.13, t)).connect(this.master());
+    body.start(t); body.stop(t + 0.15);
+
+    // シィ（擦過）。6ms 遅らせて尾を長く引く。
+    // 高域へ振り切ると energy が痩せて尾が消えるので、上は 4kHz までに留める
+    const t2 = t + 0.006;
+    const hiss = this.noise(0.45, 0.5);
+    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.setValueAtTime(1800, t2);
+    hp.frequency.exponentialRampToValueAtTime(4000, t2 + 0.34);
+    hiss.connect(hp).connect(this.env(0.45, 0.4, t2)).connect(this.master());
+    hiss.start(t2);
   },
+
   tone(freq, dur, type = 'sine', vol = 0.18, delay = 0) {
     if (!this.ok()) return;
     const c = this.ctx, t = c.currentTime + delay;
     const o = c.createOscillator(); o.type = type; o.frequency.setValueAtTime(freq, t);
-    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+    o.connect(this.env(vol, dur, t)).connect(this.master());
+    o.start(t); o.stop(t + dur + 0.02);
   },
-  /** 着弾の衝撃。低い帯域のノイズ */
-  impact() {
-    if (!this.ok()) return;
-    const c = this.ctx, t = c.currentTime;
-    const len = Math.floor(c.sampleRate * 0.3);
-    const buf = c.createBuffer(1, len, c.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
-    const src = c.createBufferSource(); src.buffer = buf;
-    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260;
-    const g = c.createGain(); g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-    src.connect(lp).connect(g).connect(c.destination); src.start(t);
-  },
-  win()  { this.slash(); this.impact(); this.tone(784, 0.1, 'square', 0.09, 0.1); this.tone(1175, 0.14, 'square', 0.08, 0.18); this.tone(1568, 0.26, 'triangle', 0.1, 0.26); },
-  lose() { this.slash(); this.impact(); this.tone(196, 0.14, 'sawtooth', 0.1, 0.1); this.tone(110, 0.5, 'sine', 0.24, 0.2); },
-  draw() { this.slash(); this.tone(523, 0.18, 'triangle', 0.11); this.tone(523, 0.24, 'triangle', 0.09, 0.2); },
-  ok() { return this.on && this.ctx && this.ctx.state !== 'suspended'; },
+
+  win()  { this.slash(); this.tone(784, 0.1, 'square', 0.09, 0.14); this.tone(1175, 0.13, 'square', 0.08, 0.22); this.tone(1568, 0.26, 'triangle', 0.1, 0.3); },
+  lose() { this.slash(); this.tone(196, 0.14, 'sawtooth', 0.09, 0.14); this.tone(110, 0.5, 'sine', 0.22, 0.24); },
+  draw() { this.slash(); this.tone(523, 0.18, 'triangle', 0.1, 0.14); },
 };
 el.mute.addEventListener('click', (e) => {
   e.stopPropagation();
@@ -338,6 +449,8 @@ function onGo(m) {
     el.times.hidden = true;
     el.action.hidden = true;
     st.phase = 'cue';
+    // 描画を書き終えてから鳴らす。音の生成で paint を遅らせない
+    sound.cue();
   });
 }
 
