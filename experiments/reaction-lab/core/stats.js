@@ -21,8 +21,7 @@ function nextStreak(streak, outcome, recorded) {
 function countsForBest(p, recorded) {
   return recorded
     && p.R != null
-    && !p.flying && !p.tooFast && !p.noInput && !p.disconnected
-    && p.Rsource === 'claimed';
+    && !p.flying && !p.tooFast && !p.noInput && !p.disconnected;
 }
 
 export function createStats({ now = () => new Date() } = {}) {

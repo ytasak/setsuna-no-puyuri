@@ -21,7 +21,6 @@ export const DEFAULT_CFG = {
   inputDeadline: 3000,  // 入力期限 T [ms]
   tieBand: 20,          // 同着幅 D [ms]
   rMin: 100,            // 生理的下限 R_min [ms]
-  eps: 80,              // 整合性検査の許容幅 ε [ms]
   rematchTimeout: 60000,
   idleTimeout: 120000,
 };
@@ -251,13 +250,13 @@ class Match {
       verdict = { [ps[0].id]: d[ps[0].id], [ps[1].id]: d[ps[1].id] };
     } else {
       const p = ps[0];
-      applyTrust(p, this.cfg);
       reason = p.flying ? 'フライング' : p.tooFast ? '反応が速すぎる'
-        : p.noInput ? '無入力' : p.untrusted ? `計測のみ（${p.untrusted}）` : '計測のみ';
+        : p.noInput ? '無入力' : '計測のみ';
       verdict = { [p.id]: (p.flying || p.tooFast || p.noInput) ? 'void' : 'solo' };
     }
 
-    const recorded = !ps.some((p) => p.untrusted) && !Object.values(verdict).some((v) => v === 'void');
+    // 勝負が成立しなかったラウンドだけ記録しない
+    const recorded = !Object.values(verdict).some((v) => v === 'void');
     const result = {
       type: 'RESULT',
       matchId: this.matchId,
@@ -268,9 +267,9 @@ class Match {
       w: r2(r.w),
       players: ps.map((p) => ({
         id: p.id, name: p.name, result: verdict[p.id],
-        R: r2(p.Rused ?? p.R), claimedR: r2(p.R), Rsource: p.Rsource ?? 'claimed',
+        R: r2(p.R),
         flying: p.flying, tooFast: p.tooFast, noInput: p.noInput, disconnected: p.disconnected,
-        untrusted: p.untrusted ?? null,
+        // serverElapsed と residual は判定に使わない。計測の診断のために残す
         serverElapsed: r2(p.serverElapsed), residual: r2(p.residual),
         recvToPaint: r2(p.tap?.recvToPaint), inputToHandler: r2(p.tap?.inputToHandler),
         frameInterval: r2(p.tap?.frameInterval), extraTaps: p.tap?.extraTaps ?? 0,
@@ -296,14 +295,11 @@ class Match {
   #summarize(rec, round) {
     const p = this.player(rec.playerId);
     const tap = rec.tap;
-    // 整合性検査に自己申告の RTT を使ってはいけない。
-    // R も rtt もクライアントが握っていると、R を小さく・rtt を大きく申告するだけで
-    // residual = serverElapsed - R - rtt を 0 に寄せられ、検査をすり抜けられる。
-    // サーバーが自分で測った serverRtt を優先し、無い場合だけ申告値に落ちる。
+    // 判定には使わない診断値。サーバーが自分で測った RTT を優先する
     const rtt = tap?.serverRtt ?? tap?.rtt ?? {};
     const serverElapsed = rec.tapRecvAt !== null && round.goSentAt !== null
       ? rec.tapRecvAt - round.goSentAt : null;
-    // 正直な計測なら serverElapsed ≒ RTT + R となり residual ≒ 0（SET2-4 §3 方式C-2）
+    // 正直な計測なら residual ≒ 0 になる。判定には使わないが、計測の健全性を見るのに便利
     const residual = serverElapsed !== null && tap?.R != null && typeof rtt.median === 'number'
       ? serverElapsed - tap.R - rtt.median : null;
 
@@ -342,36 +338,6 @@ class Match {
 // ---------------------------------------------------------------- 判定関数（純粋）
 
 /**
- * §5 ケース10・11。申告値を信用しない理由であって、不正の断定ではない。
- * ケース9（R < R_min）は含めない。申告値が実際のタップ時刻と一致していても成立するため、
- * サーバー推定値への差し替えでは救えない。フライングと同層（tooFast）で扱う。
- */
-export function untrustedReason(p, cfg) {
-  if (p.flying || p.tooFast || p.noInput || p.disconnected) return null;
-  if (p.R === null) return null;
-  if (p.residual !== null && Math.abs(p.residual) > cfg.eps) {
-    return `整合性違反(residual=${r2(p.residual)}ms)`;
-  }
-  if (p.tap && p.tap.visibilityOk === false) return 'バックグラウンド化';
-  return null;
-}
-
-/**
- * 申告値が信用できない場合、サーバー推定値に差し替える（SET2-4 §5.3）。
- * 試合を無効にしない。無効にすると、勝てない相手が意図的に違反を起こして
- * 相手の勝ちを消し続けられる（グリーフィング）。
- */
-export function applyTrust(p, cfg) {
-  p.untrusted = untrustedReason(p, cfg);
-  if (!p.untrusted) { p.Rused = p.R; p.Rsource = 'claimed'; return p; }
-  const est = p.serverElapsed !== null && typeof p.rtt?.median === 'number'
-    ? p.serverElapsed - p.rtt.median : null;
-  p.Rused = est ?? p.R; // 推定できなければ申告値のまま使う（判定不能にはしない）
-  p.Rsource = est !== null ? 'server-estimate' : 'claimed';
-  return p;
-}
-
-/**
  * docs/set2-4-sync-fairness.md §5 の判定。
  * 優先順位: 切断(GO前) > フライング・速すぎる入力 > 切断(GO後) > 無入力 > 信用検査 > 同着 > 反応時間比較
  */
@@ -395,14 +361,7 @@ export function decide(a, b, cfg) {
   if (a.noInput) return win(b, a, '相手が無入力');                                             // ケース5
   if (b.noInput) return win(a, b, '相手が無入力');
 
-  // ケース10・11 は勝敗を止めず、R を差し替えて判定する（SET2-4 §5.3）
-  applyTrust(a, cfg); applyTrust(b, cfg);
-  const note = [a, b].filter((p) => p.untrusted)
-    .map((p) => `${p.name}: ${p.untrusted}→サーバー推定値で判定`).join(' / ');
-  const suffix = note ? `（${note}・戦績に記録しない）` : '';
-
-  if (Math.abs(a.Rused - b.Rused) <= cfg.tieBand) {
-    return draw(`同着(差${r2(Math.abs(a.Rused - b.Rused))}ms)${suffix}`);                       // ケース2
-  }
-  return a.Rused < b.Rused ? win(a, b, `反応が速い${suffix}`) : win(b, a, `反応が速い${suffix}`); // ケース1
+  // 申告値をそのまま比較する。整合性検査は行わない（SET2-4 §5.3）
+  if (Math.abs(a.R - b.R) <= cfg.tieBand) return draw(`同着(差${r2(Math.abs(a.R - b.R))}ms)`); // ケース2
+  return a.R < b.R ? win(a, b, '反応が速い') : win(b, a, '反応が速い');                          // ケース1
 }

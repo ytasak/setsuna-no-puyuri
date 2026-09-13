@@ -422,7 +422,6 @@ function onResult(m) {
   };
 
   const notes = [reasonText(mine, other)];
-  if (mine.Rsource === 'server-estimate') notes.push('この端末の計測値は使われませんでした');
   if (m.recorded === false) notes.push('この試合は記録されません');
 
   st.lockUntil = performance.now() + 600;

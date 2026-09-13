@@ -77,8 +77,8 @@ const r2 = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 
 
 const ROUND_COLS = [
   'wallclock', 'roomId', 'matchId', 'roundId', 'resultId', 'mode', 'clientId', 'name', 'label',
-  'result', 'reason', 'R_ms', 'claimedR_ms', 'Rsource', 'recorded', 'opponentR_ms', 'diff_ms',
-  'flying', 'tooFast', 'noInput', 'disconnected', 'untrustedReason', 'forged', 'synthetic', 'extraTaps',
+  'result', 'reason', 'R_ms', 'recorded', 'opponentR_ms', 'diff_ms',
+  'flying', 'tooFast', 'noInput', 'disconnected', 'forged', 'synthetic', 'extraTaps',
   'serverElapsed_ms', 'rttMedian_ms', 'rttP95_ms', 'rttJitter_ms', 'rttClientClaimed_ms', 'residual_ms',
   'recvToPaint_ms', 'inputToHandler_ms', 'frameInterval_ms', 'refreshHz_est',
   'W_ms', 'delayUp_ms', 'delayDown_ms', 'ua',
@@ -117,7 +117,6 @@ export function startServer(options = {}) {
     inputDeadline: num(process.env.T, DEFAULT_CFG.inputDeadline),
     tieBand: num(process.env.D, DEFAULT_CFG.tieBand),
     rMin: num(process.env.R_MIN, DEFAULT_CFG.rMin),
-    eps: num(process.env.EPS, DEFAULT_CFG.eps),
     ...options.cfg,
   };
   const port = num(process.env.PORT, options.port ?? 8787);
@@ -351,11 +350,10 @@ export function startServer(options = {}) {
         resultId: result.resultId, mode: room.mode,
         clientId: p.id, name: p.name, label: cl.label ?? '',
         result: p.result, reason: result.reason,
-        R_ms: p.R, claimedR_ms: p.claimedR, Rsource: p.Rsource, recorded: result.recorded,
+        R_ms: p.R, recorded: result.recorded,
         opponentR_ms: other?.R ?? null,
         diff_ms: p.R != null && other?.R != null ? r2(Math.abs(p.R - other.R)) : null,
         flying: p.flying, tooFast: p.tooFast, noInput: p.noInput, disconnected: p.disconnected,
-        untrustedReason: p.untrusted ?? '',
         forged: cl.lastForged ?? '', synthetic: cl.lastSynthetic ?? '', extraTaps: p.extraTaps,
         serverElapsed_ms: p.serverElapsed,
         rttMedian_ms: r2(cl.lastServerRtt?.median), rttP95_ms: r2(cl.lastServerRtt?.p95),

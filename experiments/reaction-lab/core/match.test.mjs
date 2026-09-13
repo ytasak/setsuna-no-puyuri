@@ -147,39 +147,53 @@ test('R < R_min: 予測入力として押した側の負け', () => {
   assert.match(res.reason, /速すぎる/);
 });
 
-test('整合性違反: サーバー推定値に差し替えられ、偽造側が負ける', () => {
+// ---- 整合性検査を行わないこと（E' の決定）と、その帰結を固定する ----
+//
+// 申告値をそのまま採用する。捕まえられるのは R_min 未満だけ。
+// これは「難しい不正しか防げず、正直な 60Hz ユーザーを誤検知する」という
+// 割に合わなさから、検査を外す判断をしたため（docs/set2-4-sync-fairness.md §5.3）。
+
+test('申告値はそのまま採用される。整合性検査は行わない', () => {
   const t = setup(); toCue(t);
-  forgedTap(t, 'a', { claim: 120, arriveAt: 400 }); // 実際は 400ms で押しているのに 120ms と申告
+  // 実際は 400ms で押しているのに 150ms と申告する
+  forgedTap(t, 'a', { claim: 150, arriveAt: 400 });
   const res = resultOf(honestTap(t, 'b', 300));
-  const a = who(res, 'a');
-  assert.equal(a.Rsource, 'server-estimate');
-  assert.equal(a.claimedR, 120);
-  assert.ok(a.R > 350, `差し替え後の R は実タップ時刻に近いはず: ${a.R}`);
-  assert.equal(a.result, 'lose', '偽造しても勝てない');
-  assert.equal(who(res, 'b').result, 'win', '正直な側はちゃんと勝つ（グリーフィング対策）');
-  assert.equal(res.recorded, false, '差し替えたラウンドは戦績に記録しない');
+  assert.equal(who(res, 'a').R, 150, '申告値がそのまま使われる');
+  assert.equal(who(res, 'a').result, 'win', '既知の限界: 一貫した偽造は通る');
+  assert.equal(res.recorded, true, '勝負は成立しているので記録される');
 });
 
-test('RTT の自己申告を膨らませても整合性検査はすり抜けられない', () => {
+test('R_min 未満は依然として弾かれる。ボットの性能はここで頭打ちになる', () => {
   const t = setup(); toCue(t);
-  t.setSinceGo(410);
-  // R を 120ms と偽り、さらに RTT を 300ms と申告して residual を打ち消そうとする
-  t.m.handle({
-    type: 'TAP', clientId: 'a', eventId: 99, matchId: 'm1', roundId: 1,
-    R: 120, rtt: { median: 300 }, serverRtt: { median: 10 },
-  });
+  forgedTap(t, 'a', { claim: 99, arriveAt: 99 });   // 下限のすぐ下
   const res = resultOf(honestTap(t, 'b', 300));
-  assert.equal(who(res, 'a').Rsource, 'server-estimate', 'serverRtt が優先される');
-  assert.equal(who(res, 'a').result, 'lose');
+  assert.equal(who(res, 'a').result, 'lose', '100ms 未満は予測入力として負け');
+  assert.equal(who(res, 'a').tooFast, true);
 });
 
-test('バックグラウンド化: 差し替えて記録しない', () => {
+test('R_min ちょうど上なら通る（検査を外したことの帰結）', () => {
+  const t = setup(); toCue(t);
+  forgedTap(t, 'a', { claim: 101, arriveAt: 101 });
+  const res = resultOf(honestTap(t, 'b', 300));
+  assert.equal(who(res, 'a').result, 'win',
+    '101ms を申告し、実際にその時刻に送ってくるボットは止められない');
+});
+
+test('バックグラウンド化しても勝敗には影響しない', () => {
   const t = setup(); toCue(t);
   t.setSinceGo(210);
   t.tap('a', { R: 200, rtt: { median: 10 }, visibilityOk: false });
   const res = resultOf(honestTap(t, 'b', 300));
-  assert.equal(who(res, 'a').untrusted, 'バックグラウンド化');
-  assert.equal(res.recorded, false);
+  assert.equal(who(res, 'a').result, 'win');
+  assert.equal(res.recorded, true);
+});
+
+test('residual は判定に使わないが、診断値として残る', () => {
+  const t = setup(); toCue(t);
+  honestTap(t, 'a', 200);
+  const res = resultOf(honestTap(t, 'b', 300));
+  assert.equal(typeof who(res, 'a').residual, 'number');
+  assert.equal(typeof who(res, 'a').serverElapsed, 'number');
 });
 
 // ---------------------------------------------------------------- 重複・順序・第三者（SET2-2 §5・§7）

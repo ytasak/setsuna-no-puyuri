@@ -73,10 +73,13 @@ const cases = [
   ['片方無入力', { silent: true }, { tapAt: 200 }, (r, id) => assert.equal(who(r, id).result, 'lose')],
   ['双方無入力', { silent: true }, { silent: true }, (r, id) => assert.equal(who(r, id).result, 'draw')],
   ['R=50ms は予測入力として負け', { tapAt: 50 }, { tapAt: 300 }, (r, id) => assert.equal(who(r, id).result, 'lose')],
-  ['偽造は差し替えられて負ける', { tapAt: 400, claim: 120 }, { tapAt: 300 }, (r, id) => {
+  // 既知の限界。整合性検査を外したので、一貫した偽造は通る（E' の決定）
+  ['申告値はそのまま採用される', { tapAt: 400, claim: 150 }, { tapAt: 300 }, (r, id) => {
+    assert.equal(who(r, id).R, 150);
+    assert.equal(who(r, id).result, 'win');
+  }],
+  ['R_min 未満は弾かれる', { tapAt: 60, claim: 60 }, { tapAt: 300 }, (r, id) => {
     assert.equal(who(r, id).result, 'lose');
-    assert.equal(who(r, id).Rsource, 'server-estimate');
-    assert.equal(r.recorded, false);
   }],
   ['正常ラウンドは記録される', { tapAt: 180 }, { tapAt: 250 }, (r) => assert.equal(r.recorded, true)],
 ];
@@ -111,15 +114,6 @@ test('GO後の切断は残った側の不戦勝', async () => {
   assert.ok(r);
   assert.equal(r.players.find((p) => p.name === 'F').result, 'win');
   f.ws.close();
-});
-
-test('RTT を大きく偽っても整合性検査はすり抜けられない', async () => {
-  const r = await round(a, b, { tapAt: 400, claim: 120, fakeRtt: 300 }, { tapAt: 300 });
-  assert.ok(r);
-  assert.equal(who(r, a.id).Rsource, 'server-estimate',
-    'サーバーが自分で測った RTT を使うので、申告 RTT を膨らませても効かない');
-  assert.equal(who(r, a.id).result, 'lose');
-  await sleep(150);
 });
 
 test('第三者はルームに入れない', async () => {

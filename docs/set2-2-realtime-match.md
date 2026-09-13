@@ -133,32 +133,27 @@ SET2-4 の判定と整合性検査に必要な値をすべて載せる。
 | `frameInterval` | number | 実効フレーム間隔。リフレッシュレート推定 |
 | `visibilityOk` | bool | ラウンド中にバックグラウンド化しなかったか |
 | `extraTaps` | number | 連打回数（判定には使わない。記録のみ） |
-| `rtt` | object | クライアント側の RTT 表示用。**判定には使わない**（§5.4） |
+| `rtt` | object | クライアント側の RTT 表示用。判定には使わない |
 
-**サーバーは `R` も `rtt` も鵜呑みにしない。** 整合性検査に使う RTT は
-サーバーが `SPING` / `SPONG` で自分で測った値を使う。
-`residual = serverElapsed − R − serverRtt.median` を検査し、
-`|residual| > ε` なら `R` をサーバー推定値に差し替える（SET2-4 §5.3）。
+**サーバーが弾くのは `R < R_min` だけ**（SET2-4 §5.3 で整合性検査を廃止）。
+`residual = serverElapsed − R − serverRtt.median` は引き続き算出して CSV と `RESULT` に残すが、
+**判定には使わない**。計測が健全かを見るための診断値。
 
 ### 4.4 `RESULT` の中身
 
 ```
 {
-  type: "RESULT", matchId, roundId,
+  type: "RESULT", matchId, roundId, resultId,
   reason: "反応が速い",
   recorded: true,          // false なら戦績に計上しない（SET2-6 へのフラグ）
   players: [
     { id, name, result: "win"|"lose"|"draw"|"void",
-      R,                   // 判定に使った値
-      claimedR,            // 申告値。差し替えられた場合に両方見える
-      Rsource: "claimed"|"server-estimate",
-      flying, noInput, disconnected, untrusted }
+      R,                          // 申告値。そのまま判定に使う
+      flying, tooFast, noInput, disconnected,
+      serverElapsed, residual }   // 診断値。判定には使わない
   ]
 }
 ```
-
-`R` と `claimedR` を両方返すのは、**差し替えが起きたことを本人が確認できるようにする**ため。
-UI では「この端末の計測値は使われませんでした」と出す（SET2-5）。不正とは書かない。
 
 ---
 
@@ -389,7 +384,6 @@ adapters/durable-object.js … 本番候補
 - 画面が反応すべきサーバーイベントは `MATCHED` / `ARMED` / `GO` / `RESULT` / `PEER_LEFT` の5つ
 - `ARMED` に待機時間 `W` を含めない。含めると待ち時間が読めてフライングし放題になる
 - フライングした瞬間に相手へ知らせない。`RESULT` まで伏せる
-- `RESULT` の `Rsource` が `server-estimate` のとき「この端末の計測値は使われませんでした」と出す
 - `recorded: false` のとき「この試合は記録されません」と出す。**不正とは書かない**
 
 **SET2-6（戦績）へ**

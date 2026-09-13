@@ -105,9 +105,9 @@ test('負けた試合でも最速記録は更新される', () => {
   assert.equal(s.daily('tokA', AT).bestR, 150, '負けても速ければ記録になる');
 });
 
-test('差し替えられた申告値は最速記録に入らない', () => {
+test('記録されないラウンドは最速記録に入らない', () => {
   const s = createStats();
-  s.record(round(1, 'win', 'lose', { aR: 90, aSrc: 'server-estimate', recorded: false }), tokenOf, AT);
+  s.record(round(1, 'win', 'lose', { aR: 90, recorded: false }), tokenOf, AT);
   assert.equal(s.daily('tokA', AT).bestR, null);
 });
 
