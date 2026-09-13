@@ -19,6 +19,7 @@ function connect(token) {
     headers: token ? { cookie: `puyuri_token=${token}` } : {},
   });
   const msgs = [];
+  ws.on('error', () => {}); // クライアント側も受けておく
   ws.on('message', (raw) => msgs.push(JSON.parse(raw.toString())));
   const seen = (type) => msgs.find((m) => m.type === type);
   return {
@@ -150,5 +151,31 @@ test('接続時に当日の戦績と残り時間が返る', async () => {
   assert.equal(typeof w.daily.streak, 'number');
   assert.ok(w.msUntilReset > 0 && w.msUntilReset <= 24 * 3600 * 1000);
   assert.ok(!JSON.stringify(w.daily).includes(UUID_B), '本人向けでも token は返さない');
+  c.close(); await sleep(100);
+});
+
+// ---------------------------------------------------------------- 受信サイズ
+
+test('上限を超えるメッセージを送ってきた接続は閉じられ、サーバーは落ちない', async () => {
+  const c = connect(UUID_A);
+  await c.open(); await sleep(150);
+  const closed = new Promise((r) => c.ws.on('close', (code) => r(code)));
+  c.ws.send(JSON.stringify({ type: 'TAP', pad: 'x'.repeat(8 * 1024) }));
+  const code = await Promise.race([closed, sleep(2000).then(() => null)]);
+  assert.equal(code, 1009, 'メッセージが大きすぎるとして閉じる');
+
+  // ハンドラが無いと 'error' が未処理例外になりプロセスごと落ちる
+  await sleep(300);
+  const after = await fetch(`${base}/api/ranking`);
+  assert.equal(after.status, 200, 'サーバーは生きている');
+});
+
+test('通常のメッセージは上限に引っかからない', async () => {
+  const c = connect(UUID_B);
+  await c.open(); await sleep(150);
+  c.send({ type: 'JOIN' });
+  await sleep(250);
+  assert.ok(c.seen('QUEUED'), '普通のやり取りは通る');
+  assert.equal(c.ws.readyState, 1, '接続は生きている');
   c.close(); await sleep(100);
 });

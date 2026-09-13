@@ -368,7 +368,11 @@ export function startServer(options = {}) {
 
   // ---------------------------------------------------------------- WebSocket
 
-  const wss = new WebSocketServer({ server });
+  // 受信サイズの上限。やり取りする JSON はどれも数百バイトなので 4KB で十分に余裕がある。
+  // 公開エンドポイントなので、これが無いと巨大なメッセージを素直に受けてメモリを食う。
+  // 超えた接続は ws が 1009 で閉じる。
+  const wss = new WebSocketServer({ server, maxPayload: 4 * 1024 });
+  wss.on('error', (err) => console.log(`[wss error] ${err.message}`));
 
   // Origin 制限。既定では無効（ローカル開発と kusa 埋め込みの両方で動かすため）。
   // ALLOWED_ORIGINS="https://example.com,https://foo" で有効になる。
@@ -434,6 +438,13 @@ export function startServer(options = {}) {
     });
     if (room) startMatchIfReady(room);
     console.log(`[${room?.id ?? 'queue'}] + ${client.name} (${client.id})`);
+
+    // ハンドラが無いと 'error' が未処理例外になりプロセスごと落ちる。
+    // 上限超過のメッセージ1通でサーバーが止まるので、必ず受けておく。
+    ws.on('error', (err) => {
+      console.log(`[ws error] ${client.id}: ${err.message}`);
+      try { ws.close(); } catch { /* 既に閉じている */ }
+    });
 
     ws.on('message', (raw) => {
       let msg;
