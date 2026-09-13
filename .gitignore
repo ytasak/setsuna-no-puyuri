@@ -7,3 +7,7 @@ dist/
 
 # 実行時に自動生成される CSV。整理した計測データは名前を付けてから追加する
 experiments/reaction-lab/data/*T??????.csv
+
+# 戦績の SQLite（実行時に作られる。本番は Railway の Volume 上）
+experiments/reaction-lab/data/stats.db
+experiments/reaction-lab/data/stats.db-*

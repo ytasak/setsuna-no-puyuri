@@ -11,7 +11,7 @@ const PORT = 9100 + (process.pid % 300);
 const base = `http://127.0.0.1:${PORT}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const server = startServer({ port: PORT, csv: false, quiet: true, cfg: { wMin: 60, wMax: 120 } });
+const server = startServer({ port: PORT, csv: false, persist: false, quiet: true, cfg: { wMin: 60, wMax: 120 } });
 test.after(() => server.closeAll());
 
 function connect(token) {
@@ -56,7 +56,7 @@ test('COOKIE_SECURE=1 なら Secure + SameSite=None + Partitioned が付く', as
   const prev = process.env.COOKIE_SECURE;
   process.env.COOKIE_SECURE = '1';
   const port = PORT + 1;
-  const secureServer = startServer({ port, csv: false, quiet: true });
+  const secureServer = startServer({ port, csv: false, persist: false, quiet: true });
   try {
     await sleep(200);
     const res = await fetch(`http://127.0.0.1:${port}/game.html`);
