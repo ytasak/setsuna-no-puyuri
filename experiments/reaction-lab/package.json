@@ -6,7 +6,7 @@
   "description": "SET2-4 同期・公平性の実測用プロトタイプ（使い捨て・本番構成とは独立）",
   "scripts": {
     "start": "node server.js",
-    "test": "node --test core/match.test.mjs test/e2e.test.mjs"
+    "test": "node --test core/match.test.mjs core/stats.test.mjs test/e2e.test.mjs test/lobby.test.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

@@ -90,6 +90,7 @@ function render({ phase, lead, sub = '', action = null, times = null, leadClass 
   }
   if (action) { el.action.hidden = false; el.action.textContent = action.label; el.action.onclick = action.onClick; }
   else { el.action.hidden = true; el.action.onclick = null; }
+  renderMine();
 }
 
 const setStatus = (text, ok) => {
@@ -114,9 +115,54 @@ function showLobby() {
       action: { label: '準備する', onClick: sendReady },
     });
   } else {
-    render({ phase: 'waiting', lead: '相手を探しています', sub: 'もうひとり来るのを待っています。' });
+    render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。' });
   }
 }
+
+// ---------------------------------------------------------------- 当日の記録
+
+function applyStats(m) {
+  if (m.daily) st.daily = m.daily;
+  if (m.ranking) st.ranking = m.ranking;
+}
+
+function renderMine() {
+  const d = st.daily;
+  const bits = [];
+  if (st.me) bits.push(`<span>${st.me}</span>`);
+  if (d) {
+    bits.push(`<span>連勝 <b>${d.streak}</b></span>`);
+    bits.push(`<span>最速 <b>${d.bestR === null ? '—' : d.bestR + 'ms'}</b></span>`);
+    bits.push(`<span>${d.win}勝 ${d.lose}敗</span>`);
+  }
+  // Cookie が保存されない環境では記録が積み上がらない（SET2-6 §3.3）
+  if (!st.cookieReceived) bits.push('<span class="warn">この環境では記録が残りません</span>');
+  bits.push('<span><a href="#" id="openBoard" style="color:inherit">きょうの記録</a></span>');
+  el.mine.innerHTML = bits.join('');
+  const open = document.getElementById('openBoard');
+  if (open) open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showBoard(); };
+}
+
+function renderBoard() {
+  const r = st.ranking;
+  const row = (x, i) => `<li class="${x.name === st.me ? 'me' : ''}">`
+    + `<span class="r">${i + 1}</span><span class="n">${x.name}</span>`
+    + `<span class="v">${x.value}${x.unit ?? ''}</span></li>`;
+  const fill = (ol, list, unit) => {
+    ol.innerHTML = list.length
+      ? list.map((x, i) => row({ ...x, unit }, i)).join('')
+      : '<li class="empty">まだ記録がありません</li>';
+  };
+  fill(el.rankFast, r?.fastest ?? [], 'ms');
+  fill(el.rankStreak, r?.streak ?? [], '');
+  const left = Math.max(0, (st.resetAt ?? 0) - Date.now());
+  const h = Math.floor(left / 3600000), mi = Math.floor(left / 60000) % 60;
+  el.resetIn.textContent = `記録は毎日 0 時にリセットされます（あと ${h}時間${mi}分）`;
+}
+
+function showBoard() { send({ type: 'STATS_REQ' }); renderBoard(); el.board.hidden = false; }
+el.boardClose.addEventListener('click', (e) => { e.stopPropagation(); el.board.hidden = true; });
+el.board.addEventListener('pointerdown', (e) => e.stopPropagation());
 
 function sendReady() {
   send({ type: 'READY', matchId: st.matchId });
@@ -132,7 +178,8 @@ function send(msg) {
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const q = new URLSearchParams({ room: params.room, mode: 'duel', name: params.name });
+  // 待機列に入る。部屋名は使わない（docs/set2-3-matchmaking.md）
+  const q = new URLSearchParams({ mode: 'queue' });
   ws = new WebSocket(`${proto}://${location.host}/?${q}`);
 
   ws.onopen = () => setStatus('接続済み', true);
@@ -160,6 +207,7 @@ function onMessage(m) {
     case 'MATCHED':
       st.matchId = m.matchId;
       st.peer = (m.peer ?? [])[0] ?? 'あいて';
+      if (m.you) st.me = m.you;
       if (st.started) showLobby();
       break;
     case 'STATE':
@@ -302,14 +350,14 @@ function onResult(m) {
     phase: 'result',
     lead: `${r.mark} ${r.label}`,
     leadClass: r.cls,
-    times: [['あなた', fmt(mine)], [st.peer ?? 'あいて', fmt(other)]],
+    times: [[st.me ?? 'あなた', fmt(mine)], [st.peer ?? 'あいて', fmt(other)]],
     sub: notes.filter(Boolean).join('\n'),
   });
   setTimeout(() => {
     if (st.phase !== 'result') return;
     el.action.hidden = false;
     el.action.textContent = 'もう一度';
-    el.action.onclick = sendReady;
+    el.action.onclick = joinQueue;   // 1試合ごとに列へ戻る。連勝は切れない
   }, 600);
 }
 
