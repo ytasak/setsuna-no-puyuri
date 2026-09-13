@@ -144,6 +144,8 @@
   .fighter .tag {
     font-size: clamp(9px, 2.6vmin, 11px); color: #8d7f8f; letter-spacing: .14em;
     text-shadow: 0 1px 2px #000;
+    /* 倒れ込むのに合わせて遅れて沈む。先に名前だけ暗くなると決着より早くネタバレする */
+    transition: color .45s .3s;
   }
   #ma { width: clamp(30px, 14vmin, 90px); }
 
@@ -285,19 +287,29 @@
     80% { transform: translate(-2px, 1px); }
   }
 
-  /* 敗者は吹き飛ぶ */
-  #me.blown  .face { animation: blowL .62s .1s cubic-bezier(.16,.7,.3,1) forwards; }
-  #foe.blown .face { animation: blowR .62s .1s cubic-bezier(.16,.7,.3,1) forwards; }
-  @keyframes blowL {
-    0%   { transform: rotate(9deg); opacity: 1; }
-    22%  { transform: translate(26%, -40%) rotate(-90deg) scale(1.05); opacity: 1; }
-    100% { transform: translate(-150%, 60%) rotate(-560deg) scale(.55); opacity: 0; }
+  /* 敗者は画面に残したまま、その場で倒れ込む。
+     画面外へ飛ばすと決着の絵が片方だけになって寂しい。
+     倒れた姿が残っているほうが勝敗が一目で分かる。
+       のけぞる → 傾く → ひっくりかえって倒れ込む
+     大きさは変えず、暗く沈めるだけにする */
+  #me.fallen  .face { animation: fallL .8s .08s cubic-bezier(.3,.85,.35,1) forwards; }
+  #foe.fallen .face { animation: fallR .8s .08s cubic-bezier(.3,.85,.35,1) forwards; }
+  @keyframes fallL {
+    0%   { transform: rotate(9deg) scale(1); filter: none; }
+    16%  { transform: translate(7%, -13%) rotate(-7deg) scale(1.05); filter: brightness(1.25); }
+    52%  { transform: translate(-13%, 4%) rotate(-96deg) scale(1); filter: brightness(.75) saturate(.7); }
+    82%  { transform: translate(-21%, 17%) rotate(-172deg) scale(1); filter: brightness(.42) saturate(.5); }
+    100% { transform: translate(-20%, 15%) rotate(-166deg) scale(1); filter: brightness(.4) saturate(.45); }
   }
-  @keyframes blowR {
-    0%   { transform: scaleX(-1) rotate(9deg); opacity: 1; }
-    22%  { transform: scaleX(-1) translate(26%, -40%) rotate(-90deg) scale(1.05); opacity: 1; }
-    100% { transform: scaleX(-1) translate(-150%, 60%) rotate(-560deg) scale(.55); opacity: 0; }
+  @keyframes fallR {
+    0%   { transform: scaleX(-1) rotate(9deg) scale(1); filter: none; }
+    16%  { transform: scaleX(-1) translate(7%, -13%) rotate(-7deg) scale(1.05); filter: brightness(1.25); }
+    52%  { transform: scaleX(-1) translate(-13%, 4%) rotate(-96deg) scale(1); filter: brightness(.75) saturate(.7); }
+    82%  { transform: scaleX(-1) translate(-21%, 17%) rotate(-172deg) scale(1); filter: brightness(.42) saturate(.5); }
+    100% { transform: scaleX(-1) translate(-20%, 15%) rotate(-166deg) scale(1); filter: brightness(.4) saturate(.45); }
   }
+  /* 倒れた側の名前も一緒に沈める */
+  .fighter.fallen .tag { color: #4b4353; }
   /* 勝者は残心 */
   #me.zanshin  .face { animation: zanL .5s .08s cubic-bezier(.2,1.5,.35,1) both; }
   #foe.zanshin .face { animation: zanR .5s .08s cubic-bezier(.2,1.5,.35,1) both; }
@@ -317,9 +329,13 @@
   @keyframes slam { 0% { transform: scale(2.1); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
 
   @media (prefers-reduced-motion: reduce) {
-    #stage.strike #flash, #stage.strike .blade, #stage.strike #field,
-    .fighter.blown .face, .fighter.zanshin .face, #stage.result #lead { animation: none !important; }
-    .fighter.blown .face { opacity: .15; }
+    /* #field は空と地面に分ける前の名前で、いまは存在しない。
+       揺れが止まらなくなっていたので #sky と #ground に直した */
+    #stage.strike #flash, #stage.strike .blade, #stage.strike #sky, #stage.strike #ground,
+    .fighter.fallen .face, .fighter.zanshin .face, #stage.result #lead { animation: none !important; }
+    /* 動かさないが、倒れた結果は静止画として見せる */
+    #me.fallen  .face { transform: translate(-20%, 15%) rotate(-166deg); filter: brightness(.4) saturate(.45); }
+    #foe.fallen .face { transform: scaleX(-1) translate(-20%, 15%) rotate(-166deg); filter: brightness(.4) saturate(.45); }
     .fighter.zanshin .face { filter: drop-shadow(0 0 14px rgba(255,230,170,.8)) !important; }
   }
 </style>
