@@ -40,6 +40,7 @@ cd experiments/reaction-lab && npm install && npm start
 | 入力期限 `T` | 3.0 秒 | |
 | ランダム待機 `W` | 1.0〜4.0 秒 | |
 | 識別子 | 非公開 Cookie（`Secure` + `SameSite=None` + `Partitioned`）| [SET2-6 §3](docs/set2-6-stats-ranking.md) |
+| 戦績の置き場 | `DATA_DIR` の SQLite。当日ぶんだけ読む | [SET2-6 §5.3](docs/set2-6-stats-ranking.md) |
 | ランキング | その日だけ。最速反応時間と最長連勝の2本 | SET2-6 §6 |
 
 ## 公開
@@ -78,20 +79,40 @@ https 経由 → Secure; SameSite=None; Partitioned
 
 `COOKIE_SECURE=1` で強制することもできる。
 
+### 戦績の保存には Volume が要る
+
+戦績は `DATA_DIR` の SQLite（`stats.db`）に置く。**Railway で Volume をマウントしないと、
+再デプロイのたびにその日の記録が消える。**
+
+Railway のダッシュボードでサービスに Volume を追加し、マウント先を **`/app/data`** にする。
+それだけでよく、環境変数の追加は要らない（`DATA_DIR` の既定が `/app/data`）。
+別の場所にマウントしたい場合は `DATA_DIR` をそのパスに合わせる。
+
+| | |
+|---|---|
+| 容量 | 1日ぶんで数十〜数百KB。Free の 0.5GB で十分 |
+| レプリカ | **Volume とは併用できない。** 1インスタンスで動かす |
+| 再デプロイ | Volume 付きのサービスは入れ替えに短いダウンタイムが出る |
+
+Volume が無くても、書けなくても**サーバーは普通に動く**。戦績が残らないだけで、
+起動ログに `保存しない（メモリのみ）` と出る。
+
+Volume は root 所有でマウントされる。アプリを root で動かす（`RAILWAY_RUN_UID=0`）代わりに、
+`docker-entrypoint.sh` が所有者を直してから `su-exec` で `node` に降りる。
+**アプリ本体が root で動くことはない。**
+
 ### 環境変数
 
 | 変数 | 既定 | 用途 |
 |---|---|---|
 | `PORT` | 8787 | Railway が渡す |
+| `DATA_DIR` | `/app/data`（コンテナ）| 戦績の SQLite と CSV の置き場 |
+| `PERSIST` | 有効 | `0` で戦績を保存しない（メモリのみ）|
+| `CSV` | 本番は無効 | `1` で計測用 CSV を出す。**Volume を埋めるので常用しない** |
 | `COOKIE_SECURE` | 自動判定 | `1` で Secure を強制 |
 | `ALLOWED_ORIGINS` | 無効 | WebSocket の Origin 制限（任意）|
 | `W_MIN` / `W_MAX` | 1000 / 4000 | ランダム待機 [ms] |
 | `T` / `D` / `R_MIN` | 3000 / 20 / 100 | 入力期限・同着幅・生理的下限 [ms] |
-
-### 覚えておくこと
-
-**戦績はメモリに持っている。** 再デプロイやクラッシュでその日の記録が消える。
-日次リセット前提なので「1日ぶん消えるだけ」だが、気になるなら永続化が要る。
 
 ## チケット
 
@@ -107,3 +128,4 @@ Linear チーム `setsuna_no_puyuri`（接頭辞 `SET2`）
 | SET2-6 | 戦績・ランキング | ✅ |
 | SET2-7 | iframe組み込み（kusa連携） | |
 | SET2-8 | 安全性/審査対応 | ✅ |
+| SET2-9 | 戦績の永続化 | ✅ |

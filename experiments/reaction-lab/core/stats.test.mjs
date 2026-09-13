@@ -87,6 +87,58 @@ test('勝敗が集計され、最速記録が更新される', () => {
   assert.equal(d.streak, 2); assert.equal(d.bestStreak, 2);
 });
 
+test('onChange は変化した人ぶんだけ呼ばれる', () => {
+  const seen = [];
+  const s = createStats({ onChange: (row) => seen.push({ ...row }) });
+  s.record(round(1, 'win', 'lose'), tokenOf, AT);
+  assert.deepEqual(seen.map((r) => r.token), ['tokA', 'tokB']);
+  assert.equal(seen[0].win, 1);
+  assert.equal(seen[0].date, '2026-09-13');
+
+  // 重複は捨てられるので、保存先にも書かれない
+  seen.length = 0;
+  s.record(round(1, 'win', 'lose'), tokenOf, AT);
+  assert.deepEqual(seen, []);
+});
+
+test('保存してあった行から戦績とランキングが戻る', () => {
+  const src = createStats();
+  src.record(round(1, 'win', 'lose', { aR: 180, bR: 240 }), tokenOf, AT);
+  src.record(round(2, 'win', 'lose', { aR: 210, bR: 260 }), tokenOf, AT);
+
+  // 保存層を通したつもりで、行だけを新しいインスタンスへ渡す
+  const rows = [src.daily('tokA', AT), src.daily('tokB', AT)].map((r) => ({ ...r }));
+  const dst = createStats();
+  assert.equal(dst.restore(rows), 2);
+
+  assert.deepEqual(dst.daily('tokA', AT), src.daily('tokA', AT));
+  assert.deepEqual(dst.ranking(AT), src.ranking(AT));
+  assert.equal(dst.daily('tokA', AT).bestR, 180);
+  assert.equal(dst.daily('tokA', AT).bestStreak, 2);
+});
+
+test('復元しても続きから集計できる', () => {
+  const src = createStats();
+  src.record(round(1, 'win', 'lose', { aR: 180 }), tokenOf, AT);
+
+  const dst = createStats();
+  dst.restore([{ ...src.daily('tokA', AT) }, { ...src.daily('tokB', AT) }]);
+  dst.record(round(2, 'win', 'lose', { aR: 300 }), tokenOf, AT);
+
+  const d = dst.daily('tokA', AT);
+  assert.equal(d.games, 2);
+  assert.equal(d.win, 2);
+  assert.equal(d.streak, 2, '連勝が復元した値から続く');
+  assert.equal(d.bestR, 180, '復元した最速記録が遅い値で上書きされない');
+});
+
+test('別の日の行を復元しても当日には出てこない', () => {
+  const s = createStats();
+  s.restore([{ token: 'tokA', date: '2026-09-12', name: '前日のぷゆ', games: 9, win: 9, bestR: 120, bestStreak: 9 }]);
+  assert.equal(s.daily('tokA', AT).games, 0, '当日の戦績は 0 から');
+  assert.equal(s.ranking(AT).players, 0, '当日ランキングにも出ない');
+});
+
 test('同じ resultId の再送で戦績が増えない', () => {
   const s = createStats();
   s.record(round(1, 'win', 'lose'), tokenOf, AT);

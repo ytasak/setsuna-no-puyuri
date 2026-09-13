@@ -10,9 +10,11 @@ COPY experiments/reaction-lab/package.json experiments/reaction-lab/package-lock
 RUN npm ci --omit=dev
 
 FROM node:24-alpine
-RUN apk add --no-cache tzdata
+# su-exec は起動時に root から node へ降りるために使う（docker-entrypoint.sh）
+RUN apk add --no-cache tzdata su-exec
 WORKDIR /app
-ENV NODE_ENV=production TZ=Asia/Tokyo
+# DATA_DIR に戦績の SQLite を置く。Railway ではここに Volume をマウントする
+ENV NODE_ENV=production TZ=Asia/Tokyo DATA_DIR=/app/data
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY experiments/reaction-lab/package.json ./
@@ -21,9 +23,14 @@ COPY experiments/reaction-lab/core ./core
 COPY experiments/reaction-lab/adapters ./adapters
 COPY experiments/reaction-lab/public ./public
 
-# 記録はメモリに持つので書き込み先は不要だが、CSV 出力が参照するので用意しておく
-RUN mkdir -p data && chown -R node:node /app
-USER node
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
+ && mkdir -p "$DATA_DIR" && chown -R node:node /app
+
+# USER は指定しない。Volume の所有者を直すために起動の一瞬だけ root でいて、
+# entrypoint が node に降りてからアプリを起動する。
+# （Railway の案内どおり RAILWAY_RUN_UID=0 にすると、アプリ本体が root で動いてしまう）
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 EXPOSE 8787
 CMD ["node", "server.js"]

@@ -20,6 +20,7 @@ import { WebSocketServer } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { createMatch, DEFAULT_CFG, TIMER } from '../core/match.js';
 import { createStats } from '../core/stats.js';
+import { openStatsStore } from './stats-store.js';
 import { pickPair, isEngaged } from '../core/lobby.js';
 import { gameDate, msUntilReset } from '../core/clock.js';
 import { nickname } from '../core/nickname.js';
@@ -27,7 +28,8 @@ import { nickname } from '../core/nickname.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const PUBLIC_DIR = path.join(ROOT, 'public');
-const DATA_DIR = path.join(ROOT, 'data');
+// Railway では Volume のマウント先をここに向ける。指定が無ければリポジトリ内の data/
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
 
 const now = () => performance.now();
 
@@ -121,10 +123,16 @@ export function startServer(options = {}) {
   };
   const port = num(process.env.PORT, options.port ?? 8787);
 
+  // 書き込み先。テストは一時ディレクトリを渡す
+  const dataDir = options.dataDir ?? DATA_DIR;
+
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '');
-  const roundsCsv = path.join(DATA_DIR, `rounds-${stamp}.csv`);
-  const calibCsv = path.join(DATA_DIR, `calib-${stamp}.csv`);
-  const csvEnabled = options.csv !== false; // テストでは切る
+  const roundsCsv = path.join(dataDir, `rounds-${stamp}.csv`);
+  const calibCsv = path.join(dataDir, `calib-${stamp}.csv`);
+  // CSV は計測用（SET2-4 §7.3）。起動のたびに1本増えるので、本番では既定で切る。
+  // Volume に向けたまま放っておくと、遊んでいないあいだもファイルだけが増えていく。
+  const csvEnabled = options.csv !== false                       // テストでは切る
+    && (process.env.CSV === '1' || process.env.NODE_ENV !== 'production');
   const appendRound = makeCsv(roundsCsv, ROUND_COLS, csvEnabled);
   const appendCalib = makeCsv(calibCsv, CALIB_COLS, csvEnabled);
 
@@ -138,8 +146,18 @@ export function startServer(options = {}) {
   // x-forwarded-proto も見て自動で判断する。
   const forceSecure = process.env.COOKIE_SECURE === '1';
   const isSecure = (req) => forceSecure || req.headers['x-forwarded-proto'] === 'https';
-  const stats = createStats();
-  setInterval(() => stats.prune(), 60 * 60 * 1000).unref?.();
+  // 戦績の保存。開けなければ黙ってメモリだけで動く（adapters/stats-store.js）
+  const store = openStatsStore(path.join(dataDir, 'stats.db'), {
+    enabled: options.persist !== false && process.env.PERSIST !== '0',
+  });
+  const stats = createStats({ onChange: (s) => store.save(s) });
+  const restored = stats.restore(store.load(gameDate()));
+
+  setInterval(() => {
+    const keep = gameDate();
+    stats.prune();
+    store.prune(keep);
+  }, 60 * 60 * 1000).unref?.();
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -150,7 +168,9 @@ export function startServer(options = {}) {
 
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, date: gameDate() }));
+      // persist は「戦績が残る状態か」。Volume のマウント漏れや書き込み失敗を
+      // ログを見にいかずに確かめられるようにしておく（書き込みが一度でも失敗すると false になる）
+      res.end(JSON.stringify({ ok: true, date: gameDate(), persist: store.ok }));
       return;
     }
 
@@ -546,13 +566,16 @@ export function startServer(options = {}) {
       console.log(`  CSV      : ${path.relative(process.cwd(), roundsCsv)}`);
       console.log(`             ${path.relative(process.cwd(), calibCsv)}`);
     }
+    console.log(store.ok
+      ? `  戦績     : ${path.join(dataDir, 'stats.db')}（当日 ${restored} 人ぶんを復元）`
+      : '  戦績     : 保存しない（メモリのみ。再起動で消える）');
   });
 
   // テストから確実に落とせるようにする。server.close() だけでは既存接続が残る
   server.closeAll = () => new Promise((resolve) => {
     for (const room of rooms.values()) clearAllTimers(room);
     for (const c of wss.clients) c.terminate();
-    wss.close(() => server.close(() => resolve()));
+    wss.close(() => server.close(() => { store.close(); resolve(); }));
   });
   // Railway は停止時に SIGTERM を送る。接続を切ってから抜ける
   const shutdown = () => {

@@ -24,7 +24,12 @@ function countsForBest(p, recorded) {
     && !p.flying && !p.tooFast && !p.noInput && !p.disconnected;
 }
 
-export function createStats({ now = () => new Date() } = {}) {
+/**
+ * @param onChange 1人ぶんの戦績が変わるたびに呼ばれる。保存層をつなぐための口。
+ *   core に I/O を持ち込まないためのフックなので、**この中で例外を投げないこと**。
+ *   投げると試合の確定処理ごと巻き込む。保存に失敗しても握りつぶすのは呼ぶ側の責任。
+ */
+export function createStats({ now = () => new Date(), onChange = null } = {}) {
   /** @type {Map<string, {players: Map<string, object>, seen: Set<string>}>} */
   const days = new Map();
 
@@ -70,8 +75,31 @@ export function createStats({ now = () => new Date() } = {}) {
         if (countsForBest(p, result.recorded) && (s.bestR === null || p.R < s.bestR)) {
           s.bestR = p.R; s.bestRAt = at.toISOString();
         }
+
+        onChange?.(s);
       }
       return { recorded: true, duplicate: false, date };
+    },
+
+    /**
+     * 保存してあった行を読み戻す。起動時に1回だけ呼ぶ。
+     *
+     * onChange は呼ばない。読み戻したものをそのまま書き戻すことになるし、
+     * 起動のたびに全行を書き直すのは無駄でしかない。
+     *
+     * resultId の集合（seen）は復元しない。結果はこのプロセスの中でしか作られないので、
+     * 再起動をまたいで同じ resultId が再び届くことがない。seen は
+     * 「同じプロセスの中で二重に record しない」ための防御であって、永続化する意味がない。
+     */
+    restore(rows = []) {
+      let n = 0;
+      for (const row of rows) {
+        if (!row?.date || !row?.token) continue;
+        // 列が欠けていても blank で埋まるようにしておく
+        day(row.date).players.set(row.token, { ...blank(row.token, row.date), ...row });
+        n += 1;
+      }
+      return n;
     },
 
     /** 本人向けの当日戦績 */

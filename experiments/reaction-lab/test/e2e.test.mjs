@@ -9,7 +9,7 @@ const PORT = 8899 + (process.pid % 100);
 const base = `ws://127.0.0.1:${PORT}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const server = startServer({ port: PORT, csv: false, quiet: true, cfg: { wMin: 60, wMax: 120, inputDeadline: 600 } });
+const server = startServer({ port: PORT, csv: false, persist: false, quiet: true, cfg: { wMin: 60, wMax: 120, inputDeadline: 600 } });
 test.after(() => server.closeAll());
 
 class Bot {
