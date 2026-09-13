@@ -57,9 +57,22 @@ const sound = {
     const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
   },
-  win()  { this.slash(); this.tone(880, 0.12, 'triangle', 0.14, 0.06); this.tone(1320, 0.18, 'triangle', 0.12, 0.13); },
-  lose() { this.slash(); this.tone(130, 0.34, 'sine', 0.22, 0.06); },
-  draw() { this.tone(440, 0.22, 'triangle', 0.12); },
+  /** 着弾の衝撃。低い帯域のノイズ */
+  impact() {
+    if (!this.ok()) return;
+    const c = this.ctx, t = c.currentTime;
+    const len = Math.floor(c.sampleRate * 0.3);
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+    const src = c.createBufferSource(); src.buffer = buf;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 260;
+    const g = c.createGain(); g.gain.setValueAtTime(0.5, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    src.connect(lp).connect(g).connect(c.destination); src.start(t);
+  },
+  win()  { this.slash(); this.impact(); this.tone(784, 0.1, 'square', 0.09, 0.1); this.tone(1175, 0.14, 'square', 0.08, 0.18); this.tone(1568, 0.26, 'triangle', 0.1, 0.26); },
+  lose() { this.slash(); this.impact(); this.tone(196, 0.14, 'sawtooth', 0.1, 0.1); this.tone(110, 0.5, 'sine', 0.24, 0.2); },
+  draw() { this.slash(); this.tone(523, 0.18, 'triangle', 0.11); this.tone(523, 0.24, 'triangle', 0.09, 0.2); },
   ok() { return this.on && this.ctx && this.ctx.state !== 'suspended'; },
 };
 el.mute.addEventListener('click', (e) => {
@@ -110,8 +123,8 @@ document.addEventListener('visibilitychange', () => {
 // ---------------------------------------------------------------- 画面
 
 function clearStrike() {
-  el.stage.classList.remove('strike');
-  for (const f of [el.me, el.foe]) f.classList.remove('fell', 'stood', 'lit');
+  el.stage.classList.remove('strike', 'left');
+  for (const f of [el.me, el.foe]) f.classList.remove('blown', 'zanshin');
 }
 
 function render({ phase, lead, sub = '', action = null, times = null, leadClass = '', arena = false, cue = false }) {
@@ -134,7 +147,7 @@ function showRules() {
   clearStrike();
   render({
     phase: 'rules', lead: '刹那のぷゆり',
-    sub: '合図が出たら、すぐ押す。\n合図の前に押すと負け。',
+    sub: '「ぷゆ！」が出たら、すぐ押す。\n出る前に押すと負け。',
     action: { label: 'はじめる', onClick: () => { sound.unlock(); st.started = true; showLobby(); } },
   });
   el.sub.classList.add('rule');
@@ -146,7 +159,7 @@ function showLobby() {
   if (st.matchId && st.peer) {
     faceTagFoe.textContent = st.peer;
     render({
-      phase: 'matched', lead: '対峙', sub: `${st.peer} と向かい合った。`,
+      phase: 'matched', lead: '対 峙', sub: `${st.peer} と向かい合った。`,
       arena: true, action: { label: '構える', onClick: sendReady },
     });
   } else {
@@ -225,10 +238,10 @@ function onGo(m) {
     st.tPaint = ts;
     st.frameInterval = median(frameIntervals);
     st.tDisplay = ts + st.frameInterval;
+    // 対峙の構図はそのまま。舞台が明るくなり、画面の中央に合図が出る
     el.stage.className = 'cue';
-    el.arena.hidden = true;
     el.cue.hidden = false;
-    el.lead.textContent = 'い ま';
+    el.lead.textContent = '';
     el.lead.className = '';
     el.sub.textContent = '';
     el.times.hidden = true;
@@ -330,11 +343,20 @@ function onResult(m) {
     sub: notes.filter(Boolean).join('\n'), arena: true,
   });
 
-  // 合図より後なので自由に動かせる。斬撃 → 倒れる → 勝者が立つ
+  // 合図より後なので自由に動かせる。閃光 → 斬撃 → 敗者が吹き飛ぶ → 勝者が残心
   requestAnimationFrame(() => {
-    if (mine.result === 'win') { el.stage.classList.add('strike'); el.foe.classList.add('fell'); el.me.classList.add('stood'); sound.win(); }
-    else if (mine.result === 'lose') { el.stage.classList.add('strike'); el.me.classList.add('fell'); el.foe.classList.add('stood'); sound.lose(); }
-    else { el.me.classList.add('lit'); el.foe.classList.add('lit'); sound.draw(); }
+    if (mine.result === 'win') {
+      el.stage.classList.add('strike');              // 斬撃は自分（左）から相手（右）へ
+      el.foe.classList.add('blown'); el.me.classList.add('zanshin');
+      sound.win();
+    } else if (mine.result === 'lose') {
+      el.stage.classList.add('strike', 'left');      // 相手（右）から自分（左）へ
+      el.me.classList.add('blown'); el.foe.classList.add('zanshin');
+      sound.lose();
+    } else {
+      el.stage.classList.add('strike');
+      sound.draw();
+    }
   });
 
   setTimeout(() => {
