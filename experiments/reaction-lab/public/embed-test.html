@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>埋め込み確認 — 刹那のぷゆり</title>
+<style>
+  body { margin: 0; padding: 20px; background: #22222c; color: #e8e8ef;
+         font: 13px/1.6 system-ui, "Hiragino Sans", sans-serif; }
+  h1 { font-size: 14px; margin: 0 0 4px; }
+  p { color: #9a9aae; margin: 0 0 16px; }
+  .row { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  figure { margin: 0; }
+  figcaption { color: #9a9aae; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+  iframe { border: 1px solid #44445a; border-radius: 8px; background: #000; display: block; }
+</style>
+</head>
+<body>
+  <h1>iframe 埋め込みでの表示確認</h1>
+  <p>kusa への組み込みを想定した狭い枠での見え方。同じ room なので2枚で対戦できる。</p>
+  <div class="row">
+    <figure>
+      <figcaption>360 × 540（スマホ縦・狭め）</figcaption>
+      <iframe id="a" src="game.html?room=embed&name=ぷゆA" width="360" height="540"></iframe>
+    </figure>
+    <figure>
+      <figcaption>320 × 420（かなり狭い）</figcaption>
+      <iframe id="b" src="game.html?room=embed&name=ぷゆB" width="320" height="420"></iframe>
+    </figure>
+    <figure>
+      <figcaption>560 × 300（横長・低い）</figcaption>
+      <iframe id="c" src="game.html?room=embed2&name=ぷゆC" width="560" height="300"></iframe>
+    </figure>
+  </div>
+</body>
+</html>
