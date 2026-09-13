@@ -17,7 +17,12 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { WebSocketServer } from 'ws';
+import { randomUUID } from 'node:crypto';
 import { createMatch, DEFAULT_CFG, TIMER } from '../core/match.js';
+import { createStats } from '../core/stats.js';
+import { pickPair, isEngaged } from '../core/lobby.js';
+import { gameDate, msUntilReset } from '../core/clock.js';
+import { nickname } from '../core/nickname.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -25,6 +30,46 @@ const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
 
 const now = () => performance.now();
+
+// ---------------------------------------------------------------- 匿名 identity
+//
+// kusa は識別情報を渡してこないので、こちらで非公開の Cookie を発行する。
+// 中身は UUID だけで、ゲームの状態は持たせない。
+// docs/set2-6-stats-ranking.md §3
+
+const COOKIE_NAME = 'puyuri_token';
+const COOKIE_MAX_AGE = 30 * 24 * 60 * 60;
+
+function readToken(req) {
+  const raw = req.headers?.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() === COOKIE_NAME) {
+      const v = part.slice(i + 1).trim();
+      return /^[0-9a-f-]{36}$/i.test(v) ? v : null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Partitioned を落とさないこと。
+ * サードパーティ Cookie を遮断するブラウザ（iOS Safari など）では
+ * SameSite=None だけでは保存されず、アクセスのたびに別人が作られる。
+ * Partitioned を付けると埋め込み元ごとに分離された領域に保存され、遮断下でも機能する。
+ * 属性を知らない古いブラウザは無視するだけなので付けて損はない。
+ */
+function cookieHeader(token, secure) {
+  const attrs = [
+    `${COOKIE_NAME}=${token}`, 'Path=/', `Max-Age=${COOKIE_MAX_AGE}`, 'HttpOnly',
+  ];
+  // ローカルの平文 http で動作確認するために可変。本番は必ず secure
+  if (secure) attrs.push('Secure', 'SameSite=None', 'Partitioned');
+  else attrs.push('SameSite=Lax');
+  return attrs.join('; ');
+}
 const num = (v, d) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 const r2 = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : null);
 
@@ -89,14 +134,29 @@ export function startServer(options = {}) {
     '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
     '.csv': 'text/csv; charset=utf-8',
   };
+  const cookieSecure = process.env.COOKIE_SECURE === '1';
+  const stats = createStats();
+  setInterval(() => stats.prune(), 60 * 60 * 1000).unref?.();
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+
+    // どのレスポンスでも Cookie を書き直して有効期限をスライドさせる
+    const token = readToken(req) ?? randomUUID();
+    const headers = { 'set-cookie': cookieHeader(token, cookieSecure), 'cache-control': 'no-store' };
+
+    if (url.pathname === '/api/ranking') {
+      res.writeHead(200, { ...headers, 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify(stats.ranking()));
+      return;
+    }
+
     const rel = url.pathname === '/' ? '/index.html' : url.pathname;
     const file = path.join(PUBLIC_DIR, path.normalize(rel));
     if (!file.startsWith(PUBLIC_DIR)) { res.writeHead(403).end('forbidden'); return; }
     fs.readFile(file, (err, buf) => {
       if (err) { res.writeHead(404).end('not found'); return; }
-      res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-store' });
+      res.writeHead(200, { ...headers, 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' });
       res.end(buf);
     });
   });
@@ -104,6 +164,14 @@ export function startServer(options = {}) {
   /** @type {Map<string, Room>} */
   const rooms = new Map();
   let clientSeq = 0, matchSeq = 0;
+
+  // 待機列。docs/set2-3-matchmaking.md
+  /** @type {Array<{client: object, token: string, joinedAt: number}>} */
+  const queue = [];
+  /** 対戦中の token。1 token = 1所属（§3.3） */
+  const engagedTokens = new Set();
+  const WAIT_LIMIT = num(process.env.WAIT_LIMIT, 90_000);
+  const READY_LIMIT = num(process.env.READY_LIMIT, 30_000);
 
   function rawSend(client, payload) {
     if (client.ws.readyState === 1) client.ws.send(payload);
@@ -138,7 +206,7 @@ export function startServer(options = {}) {
       switch (c.type) {
         case 'broadcast':
           for (const cl of room.clients) send(cl, c.msg);
-          if (c.msg.type === 'RESULT') logResult(room, c.msg);
+          if (c.msg.type === 'RESULT') { logResult(room, c.msg); recordResult(room, c.msg); }
           break;
         case 'send': {
           const cl = room.clients.find((x) => x.id === c.to);
@@ -166,9 +234,86 @@ export function startServer(options = {}) {
     }
   }
 
+  /** 判定結果を当日の戦績に取り込み、本人向けの戦績とランキングを返す */
+  function recordResult(room, result) {
+    const tokenOf = (clientId) => room.clients.find((c) => c.id === clientId)?.token ?? null;
+    stats.record(result, tokenOf);
+    const rank = stats.ranking();
+    for (const c of room.clients) {
+      send(c, { type: 'STATS', daily: publicDaily(stats.daily(c.token)), ranking: rank });
+    }
+  }
+
+  /** 本人向けでも token は返さない */
+  const publicDaily = (d) => ({
+    name: d.name, games: d.games, win: d.win, lose: d.lose, draw: d.draw, voided: d.voided,
+    bestR: d.bestR === null ? null : Math.round(d.bestR), streak: d.streak, bestStreak: d.bestStreak,
+  });
+
+  // ---------------------------------------------------------------- 待機列
+
+  function leaveQueue(client) {
+    const i = queue.findIndex((e) => e.client === client);
+    if (i >= 0) queue.splice(i, 1);
+    clearTimeout(client.waitTimer);
+  }
+
+  function joinQueue(client) {
+    // 同じ接続からの二度押し。別タブ扱いにすると誤解を招くので、状態を返すだけ
+    if (queue.some((e) => e.client === client)) { send(client, { type: 'QUEUED' }); return; }
+    if (client.room) return; // すでに対戦中
+    // 別の接続が同じ token を握っている＝別タブ（docs/set2-3-matchmaking.md §3.3）
+    if (isEngaged(client.token, { queue, engagedTokens })) {
+      send(client, { type: 'QUEUE_REJECTED', reason: 'already-engaged' });
+      return;
+    }
+    queue.push({ client, token: client.token, joinedAt: Date.now() });
+    send(client, { type: 'QUEUED' });
+    client.waitTimer = setTimeout(() => {
+      leaveQueue(client);
+      send(client, { type: 'WAIT_TIMEOUT' });
+    }, WAIT_LIMIT);
+    tryPair();
+  }
+
+  /** 待機列の先頭から token が異なる2人を組む。取り出した時点で確定させる（§4） */
+  function tryPair() {
+    for (;;) {
+      const pair = pickPair(queue);
+      if (!pair) return;
+      const [i, j] = pair;
+      const b = queue.splice(j, 1)[0];
+      const a = queue.splice(i, 1)[0];
+      clearTimeout(a.client.waitTimer); clearTimeout(b.client.waitTimer);
+      if (a.client.ws.readyState !== 1 || b.client.ws.readyState !== 1) continue;
+      openRoom(a.client, b.client);
+    }
+  }
+
+  function openRoom(c1, c2) {
+    const id = 'q' + (++matchSeq);
+    const room = { id, mode: 'duel', clients: [c1, c2], match: null, matchId: null, timers: {}, queued: true };
+    rooms.set(id, room);
+    c1.room = room; c2.room = room;
+    engagedTokens.add(c1.token); engagedTokens.add(c2.token);
+    startMatchIfReady(room);
+    // 準備完了期限。放置で相手を縛らない（§4）
+    room.timers.ready = setTimeout(() => {
+      if (room.match && room.match.state === 'WAITING') {
+        for (const c of [...room.clients]) send(c, { type: 'READY_TIMEOUT' });
+        destroyRoom(room);
+      }
+    }, READY_LIMIT);
+  }
+
   function destroyRoom(room) {
     clearAllTimers(room);
     room.match = null;
+    if (room.queued) {
+      for (const c of room.clients) { engagedTokens.delete(c.token); c.room = null; }
+      rooms.delete(room.id);
+      return;
+    }
     if (room.clients.length === 0) rooms.delete(room.id);
     else startMatchIfReady(room); // 誰か残っていれば次のマッチを用意する
   }
@@ -186,8 +331,9 @@ export function startServer(options = {}) {
       send(c, {
         type: 'MATCHED',
         matchId: room.matchId,
-        // 相手の clientId は渡さない。騙りの材料を減らす（§7）
+        // 相手の clientId も token も渡さない。騙りの材料を減らす（SET2-2 §7）
         peer: room.clients.filter((x) => x.id !== c.id).map((x) => x.name),
+        you: c.nick,
         cfg,
       });
     }
@@ -243,18 +389,23 @@ export function startServer(options = {}) {
       return;
     }
     const url = new URL(req.url, 'http://localhost');
+    const queued = url.searchParams.get('mode') === 'queue';
     const roomId = url.searchParams.get('room') || 'lab';
     const mode = url.searchParams.get('mode') === 'solo' ? 'solo' : 'duel';
-    const room = getRoom(roomId, mode);
+    const room = queued ? null : getRoom(roomId, mode);
 
-    if (room.clients.length >= capacityOf(room)) {
+    if (room && room.clients.length >= capacityOf(room)) {
       ws.send(JSON.stringify({ type: 'FULL', capacity: capacityOf(room) }));
       ws.close();
       return;
     }
 
+    // Cookie が2回目以降も届かないなら、そのブラウザは保存していない（§3.3）
+    const cookieToken = readToken(req);
     const client = {
       id: 'c' + (++clientSeq), ws, room,
+      token: cookieToken ?? 'anon:' + randomUUID(),
+      cookieReceived: cookieToken !== null,
       name: (url.searchParams.get('name') || 'p' + clientSeq).slice(0, 24),
       label: (url.searchParams.get('label') || '').slice(0, 48),
       delayUp: Math.max(0, num(url.searchParams.get('delayUp'), 0)),
@@ -262,6 +413,9 @@ export function startServer(options = {}) {
       ua: req.headers['user-agent'] ?? '',
       rtts: [], pings: new Map(), pingSeq: 0,
     };
+    // 対戦では二つ名を使う。lab（room 指定）はデバッグ用なので name パラメータのまま
+    client.nick = nickname(client.token, gameDate());
+    if (queued) client.name = client.nick;
     // サーバー発の PING。人工遅延も通るので、測れるのは「サーバーから見た」往復時間
     client.pingTimer = setInterval(() => {
       if (ws.readyState !== 1) return;
@@ -270,11 +424,18 @@ export function startServer(options = {}) {
       if (client.pings.size > 30) client.pings.delete([...client.pings.keys()][0]);
       send(client, { type: 'SPING', seq });
     }, 400);
-    room.clients.push(client);
-    send(client, { type: 'WELCOME', clientId: client.id, roomId: room.id, mode: room.mode, cfg,
-      delayUp: client.delayUp, delayDown: client.delayDown });
-    startMatchIfReady(room);
-    console.log(`[${room.id}] + ${client.name} (${client.id}) up=${client.delayUp} down=${client.delayDown}`);
+    if (room) room.clients.push(client);
+    send(client, {
+      type: 'WELCOME', clientId: client.id, roomId: room?.id ?? null, mode: queued ? 'queue' : room.mode, cfg,
+      delayUp: client.delayUp, delayDown: client.delayDown,
+      you: client.nick,                       // その日限りの二つ名
+      cookieReceived: client.cookieReceived,  // false が続くなら記録が残らない
+      daily: publicDaily(stats.daily(client.token)),
+      ranking: stats.ranking(),
+      msUntilReset: msUntilReset(),
+    });
+    if (room) startMatchIfReady(room);
+    console.log(`[${room?.id ?? 'queue'}] + ${client.name} (${client.id})`);
 
     ws.on('message', (raw) => {
       let msg;
@@ -286,17 +447,32 @@ export function startServer(options = {}) {
 
     ws.on('close', () => {
       clearInterval(client.pingTimer);
-      const idx = room.clients.indexOf(client);
-      if (idx >= 0) room.clients.splice(idx, 1);
-      console.log(`[${room.id}] - ${client.name} (${client.id})`);
-      if (room.match) exec(room, room.match.handle({ type: 'DISCONNECT', clientId: client.id }));
-      if (room.clients.length === 0) { clearAllTimers(room); rooms.delete(room.id); }
+      leaveQueue(client);                 // 待機中の切断（§4）
+      engagedTokens.delete(client.token);
+      const r = client.room;
+      if (!r) { tryPair(); return; }
+      const idx = r.clients.indexOf(client);
+      if (idx >= 0) r.clients.splice(idx, 1);
+      console.log(`[${r.id}] - ${client.name} (${client.id})`);
+      if (r.match) exec(r, r.match.handle({ type: 'DISCONNECT', clientId: client.id }));
+      if (r.clients.length === 0) { clearAllTimers(r); rooms.delete(r.id); }
+      tryPair();
     });
   });
 
   function handle(client, msg) {
     const room = client.room;
     switch (msg.type) {
+      case 'JOIN':
+        joinQueue(client);
+        break;
+      case 'LEAVE_QUEUE':
+        leaveQueue(client);
+        send(client, { type: 'QUEUE_LEFT' });
+        break;
+      case 'STATS_REQ':
+        send(client, { type: 'STATS', daily: publicDaily(stats.daily(client.token)), ranking: stats.ranking() });
+        break;
       case 'PING':
         send(client, { type: 'PONG', seq: msg.seq });
         break;

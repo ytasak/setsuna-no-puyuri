@@ -22,6 +22,8 @@ const el = {
   stage: $('stage'), arena: $('arena'), me: $('me'), foe: $('foe'),
   cue: $('cue'), lead: $('lead'), times: $('times'), sub: $('sub'),
   action: $('action'), status: $('status'), mute: $('mute'),
+  mine: $('mine'), board: $('board'), rankFast: $('rankFast'), rankStreak: $('rankStreak'),
+  resetIn: $('resetIn'), boardClose: $('boardClose'),
 };
 const faceTagMe = el.me.querySelector('.tag');
 const faceTagFoe = el.foe.querySelector('.tag');
@@ -111,6 +113,8 @@ function inputTime(e, fallback) {
 const st = {
   phase: 'connecting',
   matchId: null, roundId: null, clientId: null, peer: null, started: false,
+  me: null,              // その日限りの二つ名
+  daily: null, ranking: null, cookieReceived: true, resetAt: null,
   tRecv: null, tPaint: null, tDisplay: null, frameInterval: null,
   extraTaps: 0, visibilityOk: true, lockUntil: 0,
 };
@@ -139,6 +143,7 @@ function render({ phase, lead, sub = '', action = null, times = null, leadClass 
   if (times) el.times.innerHTML = times.map(([k, v]) => `<div class="k">${k}</div><div class="v">${v}</div>`).join('');
   if (action) { el.action.hidden = false; el.action.textContent = action.label; el.action.onclick = action.onClick; }
   else { el.action.hidden = true; el.action.onclick = null; }
+  renderMine();
 }
 
 const setStatus = (text, ok) => { el.status.innerHTML = `<span class="dot${ok ? ' on' : ''}"></span> ${text}`; };
@@ -148,16 +153,69 @@ function showRules() {
   render({
     phase: 'rules', lead: '刹那のぷゆり',
     sub: '「ぷゆ！」が出たら、すぐ押す。\n出る前に押すと負け。',
-    action: { label: 'はじめる', onClick: () => { sound.unlock(); st.started = true; showLobby(); } },
+    action: { label: 'はじめる', onClick: () => { sound.unlock(); st.started = true; joinQueue(); } },
   });
   el.sub.classList.add('rule');
 }
+
+function joinQueue() {
+  send({ type: 'JOIN' });
+  clearStrike();
+  el.sub.classList.remove('rule');
+  render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。' });
+}
+
+// ---------------------------------------------------------------- 当日の記録
+
+function applyStats(m) {
+  if (m.daily) st.daily = m.daily;
+  if (m.ranking) st.ranking = m.ranking;
+}
+
+function renderMine() {
+  const d = st.daily;
+  const bits = [];
+  if (st.me) bits.push(`<span>${st.me}</span>`);
+  if (d) {
+    bits.push(`<span>連勝 <b>${d.streak}</b></span>`);
+    bits.push(`<span>最速 <b>${d.bestR === null ? '—' : d.bestR + 'ms'}</b></span>`);
+    bits.push(`<span>${d.win}勝 ${d.lose}敗</span>`);
+  }
+  // Cookie が保存されない環境では記録が積み上がらない（SET2-6 §3.3）
+  if (!st.cookieReceived) bits.push('<span class="warn">この環境では記録が残りません</span>');
+  bits.push('<span><a href="#" id="openBoard" style="color:inherit">きょうの記録</a></span>');
+  el.mine.innerHTML = bits.join('');
+  const open = document.getElementById('openBoard');
+  if (open) open.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showBoard(); };
+}
+
+function renderBoard() {
+  const r = st.ranking;
+  const row = (x, i) => `<li class="${x.name === st.me ? 'me' : ''}">`
+    + `<span class="r">${i + 1}</span><span class="n">${x.name}</span>`
+    + `<span class="v">${x.value}${x.unit ?? ''}</span></li>`;
+  const fill = (ol, list, unit) => {
+    ol.innerHTML = list.length
+      ? list.map((x, i) => row({ ...x, unit }, i)).join('')
+      : '<li class="empty">まだ記録がありません</li>';
+  };
+  fill(el.rankFast, r?.fastest ?? [], 'ms');
+  fill(el.rankStreak, r?.streak ?? [], '');
+  const left = Math.max(0, (st.resetAt ?? 0) - Date.now());
+  const h = Math.floor(left / 3600000), mi = Math.floor(left / 60000) % 60;
+  el.resetIn.textContent = `記録は毎日 0 時にリセットされます（あと ${h}時間${mi}分）`;
+}
+
+function showBoard() { send({ type: 'STATS_REQ' }); renderBoard(); el.board.hidden = false; }
+el.boardClose.addEventListener('click', (e) => { e.stopPropagation(); el.board.hidden = true; });
+el.board.addEventListener('pointerdown', (e) => e.stopPropagation());
 
 function showLobby() {
   clearStrike();
   el.sub.classList.remove('rule');
   if (st.matchId && st.peer) {
     faceTagFoe.textContent = st.peer;
+    faceTagMe.textContent = st.me ?? 'あなた';
     render({
       phase: 'matched', lead: '対 峙', sub: `${st.peer} と向かい合った。`,
       arena: true, action: { label: '構える', onClick: sendReady },
@@ -189,7 +247,8 @@ function send(msg) {
 
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const q = new URLSearchParams({ room: params.room, mode: 'duel', name: params.name });
+  // 待機列に入る。部屋名は使わない（docs/set2-3-matchmaking.md）
+  const q = new URLSearchParams({ mode: 'queue' });
   ws = new WebSocket(`${proto}://${location.host}/?${q}`);
   ws.onopen = () => setStatus('接続済み', true);
   ws.onclose = () => {
@@ -203,11 +262,36 @@ function connect() {
 
 function onMessage(m) {
   switch (m.type) {
-    case 'WELCOME': st.clientId = m.clientId; showRules(); break;
+    case 'WELCOME':
+      st.clientId = m.clientId;
+      st.me = m.you;
+      st.cookieReceived = m.cookieReceived;
+      st.resetAt = Date.now() + (m.msUntilReset ?? 0);
+      applyStats(m);
+      showRules();
+      break;
+    case 'STATS': applyStats(m); renderMine(); if (!el.board.hidden) renderBoard(); break;
+    case 'QUEUED':
+      render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。' });
+      break;
+    case 'QUEUE_REJECTED':
+      render({ phase: 'error', lead: '別のタブで参加しています',
+        sub: '同時に参加できるのは1つまでです。' });
+      break;
+    case 'WAIT_TIMEOUT':
+      render({ phase: 'waiting', lead: '相手が見つかりませんでした', sub: '',
+        action: { label: 'もう一度さがす', onClick: joinQueue } });
+      break;
+    case 'READY_TIMEOUT':
+      st.matchId = null; st.peer = null;
+      render({ phase: 'waiting', lead: '相手が構えませんでした', sub: '',
+        action: { label: 'もう一度さがす', onClick: joinQueue } });
+      break;
     case 'FULL': render({ phase: 'error', lead: 'この部屋は満員です', sub: '別の部屋を開いてください。' }); break;
     case 'MATCHED':
       st.matchId = m.matchId;
       st.peer = (m.peer ?? [])[0] ?? 'あいて';
+      if (m.you) st.me = m.you;
       if (st.started) showLobby();
       break;
     case 'STATE': if (m.matchId) st.matchId = m.matchId; break;
@@ -344,9 +428,10 @@ function onResult(m) {
   st.lockUntil = performance.now() + 600;
   clearStrike();
   faceTagFoe.textContent = st.peer ?? 'あいて';
+  faceTagMe.textContent = st.me ?? 'あなた';
   render({
     phase: 'result', lead: `${v.mark} ${v.label}`, leadClass: v.cls,
-    times: [['あなた', fmt(mine)], [st.peer ?? 'あいて', fmt(other)]],
+    times: [[st.me ?? 'あなた', fmt(mine)], [st.peer ?? 'あいて', fmt(other)]],
     sub: notes.filter(Boolean).join('\n'), arena: true,
   });
 
@@ -370,7 +455,7 @@ function onResult(m) {
     if (st.phase !== 'result') return;
     el.action.hidden = false;
     el.action.textContent = 'もう一度';
-    el.action.onclick = sendReady;
+    el.action.onclick = joinQueue;   // 1試合ごとに列へ戻る。連勝は切れない
   }, 600);
 }
 

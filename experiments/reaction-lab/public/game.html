@@ -199,6 +199,41 @@
   .dot.on { background: var(--win); }
   #stage.armed #status, #stage.cue #status { visibility: hidden; }
 
+  /* 当日の戦績。地面側に小さく出す */
+  #mine {
+    font-size: clamp(10px, 2.7vmin, 12px); color: #9a90a8;
+    display: flex; gap: .85rem; flex-wrap: wrap; justify-content: center;
+    font-variant-numeric: tabular-nums;
+  }
+  #mine b { color: #e4dcec; font-weight: 700; }
+  #mine .warn { color: var(--draw); }
+  #stage.armed #mine, #stage.cue #mine { visibility: hidden; }
+
+  /* 当日ランキング */
+  #board {
+    position: absolute; inset: 0; z-index: 8; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: .8rem; padding: 1.2rem;
+    background: rgba(5,5,11,.94); box-sizing: border-box; overflow-y: auto;
+  }
+  #board h2 { font-family: var(--brush); font-size: clamp(19px, 5.6vmin, 30px); margin: 0; }
+  #board .reset { font-size: clamp(10px, 2.7vmin, 12px); color: var(--muted); }
+  .lists { display: flex; gap: clamp(.9rem, 5vw, 2.6rem); flex-wrap: wrap; justify-content: center; }
+  .list { min-width: 8.5rem; }
+  .list h3 {
+    font-family: var(--brush); font-size: clamp(13px, 3.6vmin, 16px);
+    margin: 0 0 .35rem; color: #cbbdd6; font-weight: 400;
+  }
+  .list ol { margin: 0; padding: 0; list-style: none; font-size: clamp(11px, 3vmin, 13px); }
+  .list li {
+    display: flex; justify-content: space-between; gap: .7rem; padding: .16rem 0;
+    font-variant-numeric: tabular-nums; border-bottom: 1px solid #201a2c;
+  }
+  .list li .r { color: var(--muted); width: 1.2em; }
+  .list li .n { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list li .v { font-weight: 700; }
+  .list li.me { color: var(--draw); }
+  .list .empty { color: var(--muted); font-size: .92em; padding: .3rem 0; }
+
   #mute {
     position: absolute; top: .5rem; right: .5rem; padding: .25rem .65rem; min-height: 0;
     font-family: system-ui, sans-serif; font-size: 11px; font-weight: 500;
@@ -315,6 +350,7 @@
         <div id="times" class="times" hidden></div>
         <div id="sub"></div>
         <button id="action" hidden></button>
+        <div id="mine"></div>
         <div id="status" class="note"></div>
       </div>
     </div>
@@ -323,6 +359,15 @@
     <div class="blade b2"></div>
     <div class="blade b3"></div>
     <div id="flash"></div>
+    <div id="board" hidden>
+      <h2>きょうの記録</h2>
+      <div class="lists">
+        <div class="list"><h3>最速</h3><ol id="rankFast"></ol></div>
+        <div class="list"><h3>連勝</h3><ol id="rankStreak"></ol></div>
+      </div>
+      <div class="reset" id="resetIn"></div>
+      <button id="boardClose">閉じる</button>
+    </div>
     <button id="mute" title="音のオン/オフ">♪ オン</button>
   </div>
   <script src="game.js"></script>
