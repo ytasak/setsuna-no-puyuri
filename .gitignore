@@ -4,3 +4,6 @@ dist/
 *.log
 .env
 .env.*
+
+# 実行時に自動生成される CSV。整理した計測データは名前を付けてから追加する
+experiments/reaction-lab/data/*T??????.csv
