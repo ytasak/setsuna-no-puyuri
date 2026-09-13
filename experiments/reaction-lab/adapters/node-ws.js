@@ -168,7 +168,9 @@ export function startServer(options = {}) {
 
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, date: gameDate() }));
+      // persist は「戦績が残る状態か」。Volume のマウント漏れや書き込み失敗を
+      // ログを見にいかずに確かめられるようにしておく（書き込みが一度でも失敗すると false になる）
+      res.end(JSON.stringify({ ok: true, date: gameDate(), persist: store.ok }));
       return;
     }
 
