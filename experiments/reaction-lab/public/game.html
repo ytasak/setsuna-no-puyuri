@@ -34,6 +34,73 @@
     position: relative; flex: 1 1 auto; min-height: 0;
     background: linear-gradient(#05050e 0%, #0c0920 38%, #221436 68%, #4e2340 88%, #8c3b50 100%);
   }
+  /* 星。静止した点。合図待ちでは瞬きも止める */
+  #stars {
+    position: absolute; left: 0; right: 0; top: 0; height: 76%;
+    background-image:
+      radial-gradient(1.5px 1.5px at 8% 22%, #fff, transparent),
+      radial-gradient(1.2px 1.2px at 17% 9%,  #ffeedd, transparent),
+      radial-gradient(1px 1px     at 31% 31%, #fff, transparent),
+      radial-gradient(1.6px 1.6px at 39% 14%, #fff, transparent),
+      radial-gradient(1px 1px     at 47% 38%, #e8ddff, transparent),
+      radial-gradient(1.3px 1.3px at 56% 7%,  #fff, transparent),
+      radial-gradient(1px 1px     at 63% 27%, #ffeedd, transparent),
+      radial-gradient(1.5px 1.5px at 71% 17%, #fff, transparent),
+      radial-gradient(1px 1px     at 79% 41%, #fff, transparent),
+      radial-gradient(1.2px 1.2px at 86% 11%, #e8ddff, transparent),
+      radial-gradient(1px 1px     at 93% 29%, #fff, transparent),
+      radial-gradient(1.4px 1.4px at 24% 48%, #fff, transparent),
+      radial-gradient(1px 1px     at 68% 52%, #ffeedd, transparent),
+      radial-gradient(1.1px 1.1px at 4% 44%,  #fff, transparent);
+    opacity: .8; animation: twinkle 4.5s ease-in-out infinite;
+  }
+  @keyframes twinkle { 0%,100% { opacity: .82; } 50% { opacity: .52; } }
+
+  /* 雲。ゆっくり流れる */
+  #clouds { position: absolute; left: 0; right: 0; top: 18%; height: 40%; overflow: hidden; }
+  #clouds i {
+    position: absolute; display: block; border-radius: 50%;
+    background: rgba(255,186,166,.085); filter: blur(16px);
+    animation: drift 90s linear infinite;
+  }
+  #clouds i:nth-child(1) { width: 46%; height: 26%; left: -50%; top: 8%;  animation-duration: 96s; }
+  #clouds i:nth-child(2) { width: 34%; height: 18%; left: -40%; top: 44%; animation-duration: 72s; animation-delay: -30s; }
+  #clouds i:nth-child(3) { width: 58%; height: 22%; left: -60%; top: 68%; animation-duration: 120s; animation-delay: -60s; }
+  @keyframes drift { to { transform: translateX(280%); } }
+
+  /* 山の稜線。遠近2枚。山は動かない */
+  .ridge { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; display: block; }
+  #ridgeFar  { height: clamp(46px, 13vmin, 110px); fill: #2b1b3c; opacity: .75; bottom: 6%; }
+  #ridgeNear { height: clamp(34px, 9.5vmin, 82px); fill: #130c1e; bottom: 0; }
+
+  /* 草。風になびく */
+  .grass {
+    position: absolute; left: -6%; right: -6%; bottom: 0;
+    transform-origin: bottom center;
+    animation: sway 5.5s ease-in-out infinite;
+    -webkit-mask-image: linear-gradient(to top, #000 18%, transparent 100%);
+    mask-image: linear-gradient(to top, #000 18%, transparent 100%);
+  }
+  /* 奥の草。細かく低い */
+  #grassBack {
+    height: clamp(12px, 2.8vmin, 22px);
+    background: repeating-linear-gradient(92deg, #1a1026 0 1.5px, transparent 1.5px 5px);
+    animation-duration: 7s;
+  }
+  /* 手前の草。太く高い */
+  #grassFront {
+    height: clamp(18px, 4.4vmin, 34px);
+    background: repeating-linear-gradient(95deg, #07060c 0 2.4px, transparent 2.4px 9px);
+    animation-duration: 5.2s; animation-delay: -1.6s;
+  }
+  @keyframes sway { 0%,100% { transform: skewX(-3deg); } 50% { transform: skewX(3deg); } }
+
+  /* 構えた瞬間に風が止まる。
+     動くものを残すと合図の描画が遅れかねないうえ、止まること自体が緊張になる */
+  #stage.armed .grass, #stage.cue .grass { animation: none; transform: skewX(0deg); }
+  #stage.armed #clouds i, #stage.cue #clouds i { animation-play-state: paused; }
+  #stage.armed #stars, #stage.cue #stars { animation: none; opacity: .82; }
+
   #moon {
     position: absolute; top: 14%; left: 22%;
     width: clamp(26px, 7vmin, 46px); aspect-ratio: 1; border-radius: 50%;
@@ -47,6 +114,7 @@
   }
   /* 合図で舞台が一段明るくなる。transition は付けない */
   #stage.cue #sky { filter: brightness(2.5) saturate(.55); }
+  #stage.cue #ridgeFar, #stage.cue #ridgeNear { opacity: .5; }
   #stage.cue #ground { filter: brightness(2.2); }
   #stage.cue #moon { box-shadow: 0 0 56px rgba(255,255,255,.55); }
 
@@ -205,7 +273,17 @@
 <body>
   <div id="stage">
     <div id="sky">
+      <div id="stars"></div>
+      <div id="clouds"><i></i><i></i><i></i></div>
       <div id="moon"></div>
+      <svg id="ridgeFar" class="ridge" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0,120 L0,74 L110,30 L196,62 L300,18 L418,70 L520,38 L642,78 L762,32 L884,66 L1002,26 L1122,64 L1200,44 L1200,120 Z"/>
+      </svg>
+      <svg id="ridgeNear" class="ridge" viewBox="0 0 1200 120" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0,120 L0,90 L88,50 L172,86 L262,42 L362,92 L472,56 L584,94 L702,48 L824,88 L944,54 L1064,92 L1162,60 L1200,82 L1200,120 Z"/>
+      </svg>
+      <div id="grassBack" class="grass"></div>
+      <div id="grassFront" class="grass"></div>
     </div>
     <div id="ground">
       <div id="arena" hidden>
