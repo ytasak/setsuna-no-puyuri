@@ -81,12 +81,12 @@ const ROUND_COLS = [
   'flying', 'tooFast', 'noInput', 'disconnected', 'forged', 'synthetic', 'extraTaps',
   'serverElapsed_ms', 'rttMedian_ms', 'rttP95_ms', 'rttJitter_ms', 'rttClientClaimed_ms', 'residual_ms',
   'recvToPaint_ms', 'inputToHandler_ms', 'frameInterval_ms', 'refreshHz_est',
-  'W_ms', 'delayUp_ms', 'delayDown_ms', 'ua',
+  'W_ms', 'delayUp_ms', 'delayDown_ms',
 ];
 const CALIB_COLS = [
   'wallclock', 'clientId', 'name', 'label', 'clockResolution_ms',
   'frameInterval_median_ms', 'frameInterval_p95_ms', 'refreshHz_est',
-  'rttMedian_ms', 'rttP95_ms', 'rttJitter_ms', 'dpr', 'cores', 'screen', 'ua',
+  'rttMedian_ms', 'rttP95_ms', 'rttJitter_ms', 'dpr', 'cores', 'screen',
 ];
 
 function median(a) { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); const m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
@@ -371,7 +371,7 @@ export function startServer(options = {}) {
         residual_ms: p.residual,
         recvToPaint_ms: p.recvToPaint, inputToHandler_ms: p.inputToHandler,
         frameInterval_ms: fi, refreshHz_est: fi ? Math.round(1000 / fi) : null,
-        W_ms: result.w, delayUp_ms: cl.delayUp ?? 0, delayDown_ms: cl.delayDown ?? 0, ua: cl.ua ?? '',
+        W_ms: result.w, delayUp_ms: cl.delayUp ?? 0, delayDown_ms: cl.delayDown ?? 0,
       });
     }
   }
@@ -422,7 +422,6 @@ export function startServer(options = {}) {
       label: (url.searchParams.get('label') || '').slice(0, 48),
       delayUp: Math.max(0, num(url.searchParams.get('delayUp'), 0)),
       delayDown: Math.max(0, num(url.searchParams.get('delayDown'), 0)),
-      ua: req.headers['user-agent'] ?? '',
       rtts: [], pings: new Map(), pingSeq: 0,
     };
     // 対戦では二つ名を使う。lab（room 指定）はデバッグ用なので name パラメータのまま
@@ -528,7 +527,7 @@ export function startServer(options = {}) {
           frameInterval_median_ms: r2(msg.frameIntervalMedian), frameInterval_p95_ms: r2(msg.frameIntervalP95),
           refreshHz_est: msg.frameIntervalMedian ? Math.round(1000 / msg.frameIntervalMedian) : null,
           rttMedian_ms: r2(msg.rtt?.median), rttP95_ms: r2(msg.rtt?.p95), rttJitter_ms: r2(msg.rtt?.jitter),
-          dpr: msg.dpr ?? null, cores: msg.cores ?? null, screen: msg.screen ?? null, ua: client.ua,
+          dpr: msg.dpr ?? null, cores: msg.cores ?? null, screen: msg.screen ?? null,
         });
         send(client, { type: 'CALIB_OK' });
         break;
