@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>刹那のぷゆり</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Reggae+One&display=swap" rel="stylesheet">
 <style>
   html, body { height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; }
   [hidden] { display: none !important; }
@@ -11,6 +14,8 @@
   :root {
     --win: #6ee7a8; --lose: #ff7a6d; --draw: #f0c95e; --muted: #8e8ba0;
     --ink: #f2eee6;
+    /* 見出し用の筆書体。読み込めなくても明朝系に落ちる */
+    --brush: "Reggae One", "Klee One", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
   }
 
   body {
@@ -148,9 +153,15 @@
   /* 対峙の構図を崩さず、画面の中央に出す */
   #cue {
     position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); z-index: 4;
-    font-size: clamp(46px, 15vmin, 120px); font-weight: 900; letter-spacing: .04em;
-    color: #fff; text-shadow: 0 0 18px rgba(255,220,140,.9), 0 4px 0 #b4482f, 0 8px 24px rgba(0,0,0,.6);
-    white-space: nowrap;
+    font-family: var(--brush);
+    font-size: clamp(56px, 18vmin, 150px); letter-spacing: .02em;
+    color: #fff; white-space: nowrap;
+    /* 墨の輪郭を重ねて太らせる */
+    text-shadow:
+      0 0 26px rgba(255,216,130,.95),
+      3px 0 0 #8f2f1c, -3px 0 0 #8f2f1c, 0 3px 0 #8f2f1c, 0 -3px 0 #8f2f1c,
+      2px 2px 0 #8f2f1c, -2px 2px 0 #8f2f1c, 2px -2px 0 #8f2f1c, -2px -2px 0 #8f2f1c,
+      0 9px 0 #5d1b10, 0 14px 28px rgba(0,0,0,.7);
   }
 
   /* ---------------- HUD（地面側） ---------------- */
@@ -160,19 +171,26 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: .4rem; padding: .8rem 1rem; box-sizing: border-box; height: 100%;
   }
-  #lead { font-size: clamp(18px, 5.2vmin, 30px); font-weight: 800; letter-spacing: .12em; }
-  #stage.armed #lead { color: #6a5a6a; font-weight: 500; letter-spacing: .55em; }
-  #stage.result #lead { font-size: clamp(22px, 6.6vmin, 38px); }
+  #lead {
+    font-family: var(--brush);
+    font-size: clamp(21px, 6vmin, 36px); letter-spacing: .1em;
+    text-shadow: 0 2px 0 rgba(0,0,0,.7), 0 6px 16px rgba(0,0,0,.5);
+  }
+  #stage.armed #lead { color: #7a687c; letter-spacing: .5em; text-shadow: none; }
+  #stage.result #lead {
+    font-size: clamp(26px, 8vmin, 46px);
+    text-shadow: 0 0 22px currentColor, 0 3px 0 rgba(0,0,0,.8), 0 8px 20px rgba(0,0,0,.6);
+  }
   #sub { color: var(--muted); font-size: clamp(11px, 3vmin, 13px); white-space: pre-line; min-height: 1.1em; }
   .rule { line-height: 2; }
 
   .times { display: grid; grid-template-columns: auto auto; gap: 0 1rem; font-variant-numeric: tabular-nums; }
-  .times .k { color: var(--muted); text-align: right; font-size: .85em; }
+  .times .k { color: var(--muted); text-align: right; font-size: .85em; font-family: var(--brush); }
   .times .v { text-align: left; font-weight: 800; font-size: 1.05em; }
   .win { color: var(--win); } .lose { color: var(--lose); } .draw { color: var(--draw); }
 
   button {
-    font: inherit; font-weight: 700; padding: .7rem 1.9rem; border-radius: 999px;
+    font: inherit; font-family: var(--brush); padding: .7rem 1.9rem; border-radius: 999px;
     border: 2px solid currentColor; background: rgba(0,0,0,.35); color: inherit; cursor: pointer;
     min-height: 48px; touch-action: manipulation;
   }
@@ -183,7 +201,8 @@
 
   #mute {
     position: absolute; top: .5rem; right: .5rem; padding: .25rem .65rem; min-height: 0;
-    font-size: 11px; font-weight: 500; border-width: 1px; color: #6a6a7c; z-index: 5;
+    font-family: system-ui, sans-serif; font-size: 11px; font-weight: 500;
+    border-width: 1px; color: #6a6a7c; z-index: 5;
   }
   #stage.armed #mute, #stage.cue #mute { visibility: hidden; }
 

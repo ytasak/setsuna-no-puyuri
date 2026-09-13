@@ -168,6 +168,13 @@ function showLobby() {
 }
 
 function sendReady() {
+  // 書体の読み込み中にラウンドが始まると、合図の字形が途中で入れ替わりうる。
+  // 描画が遅れて計測に影響するのを避けるため、載りきってから構えさせる
+  if (document.fonts && document.fonts.status !== 'loaded') {
+    el.action.hidden = true;
+    document.fonts.ready.then(sendReady);
+    return;
+  }
   send({ type: 'READY', matchId: st.matchId });
   clearStrike();
   render({ phase: 'ready', lead: '構えた', sub: '相手が構えるのを待っています。', arena: true });
