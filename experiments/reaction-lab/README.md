@@ -39,8 +39,11 @@ npm start
 
 | パス | 用途 |
 |---|---|
-| `/game.html` | **プレイ用**。刹那のぷゆりの体験プロトタイプ（SET2-5） |
-| `/` | 計測用の lab。診断値とCSVを取る（SET2-4） |
+| `/` | **ゲーム本体**（`/game.html` と同じもの）|
+| `/lab.html` | 計測用の lab。診断値とCSVを取る（SET2-4）|
+| `/embed-test.html` | iframe に埋め込んだ見え方の確認 |
+| `/api/health` | ヘルスチェック |
+| `/api/ranking` | 当日ランキング（JSON）|
 
 ```
 http://localhost:8787/game.html

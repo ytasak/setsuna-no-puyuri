@@ -133,7 +133,11 @@ export function startServer(options = {}) {
     '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8',
     '.csv': 'text/csv; charset=utf-8',
   };
-  const cookieSecure = process.env.COOKIE_SECURE === '1';
+  // Railway など TLS 終端の後ろに置かれる場合、req 自体は平文で届く。
+  // 環境変数の設定漏れで Cookie の属性が落ちると iOS Safari で identity が保てないので、
+  // x-forwarded-proto も見て自動で判断する。
+  const forceSecure = process.env.COOKIE_SECURE === '1';
+  const isSecure = (req) => forceSecure || req.headers['x-forwarded-proto'] === 'https';
   const stats = createStats();
   setInterval(() => stats.prune(), 60 * 60 * 1000).unref?.();
 
@@ -142,7 +146,13 @@ export function startServer(options = {}) {
 
     // どのレスポンスでも Cookie を書き直して有効期限をスライドさせる
     const token = readToken(req) ?? randomUUID();
-    const headers = { 'set-cookie': cookieHeader(token, cookieSecure), 'cache-control': 'no-store' };
+    const headers = { 'set-cookie': cookieHeader(token, isSecure(req)), 'cache-control': 'no-store' };
+
+    if (url.pathname === '/api/health') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, date: gameDate() }));
+      return;
+    }
 
     if (url.pathname === '/api/ranking') {
       res.writeHead(200, { ...headers, 'content-type': 'application/json; charset=utf-8' });
@@ -150,7 +160,7 @@ export function startServer(options = {}) {
       return;
     }
 
-    const rel = url.pathname === '/' ? '/index.html' : url.pathname;
+    const rel = url.pathname === '/' ? '/game.html' : url.pathname;
     const file = path.join(PUBLIC_DIR, path.normalize(rel));
     if (!file.startsWith(PUBLIC_DIR)) { res.writeHead(403).end('forbidden'); return; }
     fs.readFile(file, (err, buf) => {
@@ -545,5 +555,16 @@ export function startServer(options = {}) {
     for (const c of wss.clients) c.terminate();
     wss.close(() => server.close(() => resolve()));
   });
+  // Railway は停止時に SIGTERM を送る。接続を切ってから抜ける
+  const shutdown = () => {
+    console.log('shutting down');
+    server.closeAll().then(() => process.exit(0));
+    setTimeout(() => process.exit(0), 5000).unref?.();
+  };
+  if (!options.quiet) {
+    process.once('SIGTERM', shutdown);
+    process.once('SIGINT', shutdown);
+  }
+
   return server;
 }
