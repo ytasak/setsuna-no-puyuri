@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { gameDate, nextReset, msUntilReset } from './clock.js';
-import { nickname } from './nickname.js';
+import { nickname, nicknameSpace, nicknameLists } from './nickname.js';
 import { createStats } from './stats.js';
 import { pickPair, isEngaged } from './lobby.js';
 
@@ -27,6 +27,32 @@ test('次のリセットは JST の 00:00', () => {
 test('二つ名は同じ日なら同じ、日が変われば変わる', () => {
   assert.equal(nickname('t1', '2026-09-13'), nickname('t1', '2026-09-13'));
   assert.notEqual(nickname('t1', '2026-09-13'), nickname('t1', '2026-09-14'));
+});
+
+test('語彙に重複が無く、長さが互いに素', () => {
+  const { PREFIX, NA } = nicknameLists;
+  assert.equal(new Set(PREFIX).size, PREFIX.length, '前半に重複がある');
+  assert.equal(new Set(NA).size, NA.length, '後半に重複がある');
+  // 公約数があると h と h>>>8 の相関で偏りが出やすい
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  assert.equal(gcd(PREFIX.length, NA.length), 1,
+    `${PREFIX.length} と ${NA.length} が互いに素でない`);
+});
+
+test('組み合わせが偏らずに散る', () => {
+  const seen = new Map();
+  const N = 20000;
+  for (let i = 0; i < N; i++) seen.set(nickname(`t${i}`, '2026-09-13'), true);
+  // 誕生日問題で全通りは埋まらないが、9割以上は出るはず
+  assert.ok(seen.size > nicknameSpace * 0.9,
+    `${N}件で ${seen.size}/${nicknameSpace} しか出ていない`);
+
+  // 前半・後半それぞれが全要素使われているか
+  const { PREFIX, NA } = nicknameLists;
+  const heads = new Set(), tails = new Set();
+  for (const n of seen.keys()) { const i = n.lastIndexOf('の'); heads.add(n.slice(0, i)); tails.add(n.slice(i + 1)); }
+  assert.equal(heads.size, PREFIX.length, '使われていない前半がある');
+  assert.equal(tails.size, NA.length, '使われていない後半がある');
 });
 
 test('二つ名に token が混ざらない', () => {
