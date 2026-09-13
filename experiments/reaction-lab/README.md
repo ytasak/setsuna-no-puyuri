@@ -42,10 +42,21 @@ npm start
 | `/game.html` | **プレイ用**。刹那のぷゆりの体験プロトタイプ（SET2-5） |
 | `/` | 計測用の lab。診断値とCSVを取る（SET2-4） |
 
-同じ `room` を2つ開くと対戦になる。
-
 ```
-http://localhost:8787/game.html?room=play&name=じぶん
+http://localhost:8787/game.html
+```
+
+**同じブラウザで2タブ開いても対戦できない。** 同一 Cookie ＝同一 token なので、
+自己対戦の防止（SET2-3 §3.2）が働いて組まれない。2人で試すには Cookie を分ける。
+
+| 方法 | やり方 |
+|---|---|
+| オリジンを分ける | 片方を `http://localhost:8787/`、もう片方を `http://127.0.0.1:8787/` で開く |
+| シークレットウィンドウ | 片方を通常、もう片方をシークレットで開く |
+
+```bash
+COOKIE_SECURE=1 npm start   # 本番相当。Secure + SameSite=None + Partitioned が付く
+WAIT_LIMIT=90000 READY_LIMIT=30000 npm start
 ```
 
 閾値は環境変数で振れる（§6 の「実測で決める値」に対応）。

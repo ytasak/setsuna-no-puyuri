@@ -259,6 +259,10 @@ export function startServer(options = {}) {
   }
 
   function joinQueue(client) {
+    // 同じ接続からの二度押し。別タブ扱いにすると誤解を招くので、状態を返すだけ
+    if (queue.some((e) => e.client === client)) { send(client, { type: 'QUEUED' }); return; }
+    if (client.room) return; // すでに対戦中
+    // 別の接続が同じ token を握っている＝別タブ（docs/set2-3-matchmaking.md §3.3）
     if (isEngaged(client.token, { queue, engagedTokens })) {
       send(client, { type: 'QUEUE_REJECTED', reason: 'already-engaged' });
       return;
