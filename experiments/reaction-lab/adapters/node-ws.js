@@ -226,7 +226,22 @@ export function startServer(options = {}) {
 
   const wss = new WebSocketServer({ server });
 
+  // Origin 制限。既定では無効（ローカル開発と kusa 埋め込みの両方で動かすため）。
+  // ALLOWED_ORIGINS="https://example.com,https://foo" で有効になる。
+  // ブラウザ以外のクライアントは Origin を自由に詐称できるので、これは強い防御ではない。
+  // 実質的な防御は SET2-2 §7（clientId は接続から引く・参加者リストはサーバーが作る）のほう。
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  function originAllowed(req) {
+    if (allowedOrigins.length === 0) return true;
+    return allowedOrigins.includes(req.headers.origin ?? '');
+  }
+
   wss.on('connection', (ws, req) => {
+    if (!originAllowed(req)) {
+      console.log(`[reject] origin=${req.headers.origin ?? '(なし)'}`);
+      ws.close(1008, 'origin not allowed');
+      return;
+    }
     const url = new URL(req.url, 'http://localhost');
     const roomId = url.searchParams.get('room') || 'lab';
     const mode = url.searchParams.get('mode') === 'solo' ? 'solo' : 'duel';
