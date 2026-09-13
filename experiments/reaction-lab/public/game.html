@@ -132,7 +132,7 @@
     width: min(100%, 30rem); margin: 0 auto; padding: 0 1.5rem;
     box-sizing: border-box; z-index: 2;
   }
-  .fighter { display: flex; flex-direction: column; align-items: center; gap: .25rem; transform: translateY(4%); }
+  .fighter { position: relative; display: flex; flex-direction: column; align-items: center; gap: .25rem; transform: translateY(4%); }
   .fighter .face {
     font-size: clamp(40px, 14vmin, 80px); line-height: 1;
     filter: brightness(.42) contrast(1.15) saturate(.5);
@@ -287,6 +287,44 @@
     80% { transform: translate(-2px, 1px); }
   }
 
+  /* 居合。合図までは鞘の中で、抜く瞬間まで見えない。
+     opacity:0 で置いておくので、構えている間に刀が見えることはない。
+
+     🔪 は既定で「柄が左上・切っ先が右下」を向いている（＝+45°）。
+     rotate(-45deg) で水平に右を向く。回転角はこれを基準に置いた。
+
+       鞘の中 → 抜き上げて一閃 → 振り抜き → 切っ先を相手に向けて残心
+
+     閃光が最も明るいのが最初の 0.1 秒で、抜く動作はその下で起きる。
+     居合が「見えないほど速い」のはそれで出る */
+  .fighter .knife {
+    position: absolute; left: 50%; top: 24%;
+    width: 1em; height: 1em; margin-left: -.5em;
+    font-size: clamp(25px, 8.6vmin, 50px); line-height: 1;
+    display: grid; place-items: center;
+    opacity: 0; pointer-events: none; z-index: 3;
+  }
+  #me.iai  .knife { animation: iaiL .9s cubic-bezier(.2,.9,.3,1) forwards; }
+  #foe.iai .knife { animation: iaiR .9s cubic-bezier(.2,.9,.3,1) forwards; }
+  /* 移動量は刀自身の一辺（1em）が単位。顔の半分がおよそ 90% にあたるので、
+     150% で顔の外に出て「前に構えている」形になる */
+  @keyframes iaiL {
+    0%   { opacity: 0; transform: translate(-70%, 58%) rotate(120deg) scale(.55); filter: none; }
+    9%   { opacity: 1; transform: translate(-46%, 46%) rotate(102deg) scale(.85); filter: drop-shadow(0 0 10px rgba(255,245,210,.95)); }
+    26%  { opacity: 1; transform: translate(100%, -58%) rotate(-84deg) scale(1.2); filter: drop-shadow(0 0 16px rgba(255,245,210,1)); }
+    46%  { opacity: 1; transform: translate(192%, 16%) rotate(-22deg) scale(1.05); filter: drop-shadow(0 0 12px rgba(255,245,210,.95)); }
+    72%  { opacity: 1; transform: translate(150%, 22%) rotate(-45deg) scale(1); filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); }
+    100% { opacity: 1; transform: translate(150%, 22%) rotate(-45deg) scale(1); filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); }
+  }
+  @keyframes iaiR {
+    0%   { opacity: 0; transform: scaleX(-1) translate(-70%, 58%) rotate(120deg) scale(.55); filter: none; }
+    9%   { opacity: 1; transform: scaleX(-1) translate(-46%, 46%) rotate(102deg) scale(.85); filter: drop-shadow(0 0 10px rgba(255,245,210,.95)); }
+    26%  { opacity: 1; transform: scaleX(-1) translate(100%, -58%) rotate(-84deg) scale(1.2); filter: drop-shadow(0 0 16px rgba(255,245,210,1)); }
+    46%  { opacity: 1; transform: scaleX(-1) translate(192%, 16%) rotate(-22deg) scale(1.05); filter: drop-shadow(0 0 12px rgba(255,245,210,.95)); }
+    72%  { opacity: 1; transform: scaleX(-1) translate(150%, 22%) rotate(-45deg) scale(1); filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); }
+    100% { opacity: 1; transform: scaleX(-1) translate(150%, 22%) rotate(-45deg) scale(1); filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); }
+  }
+
   /* 敗者は画面に残したまま、その場で倒れ込む。
      画面外へ飛ばすと決着の絵が片方だけになって寂しい。
      倒れた姿が残っているほうが勝敗が一目で分かる。
@@ -332,7 +370,11 @@
     /* #field は空と地面に分ける前の名前で、いまは存在しない。
        揺れが止まらなくなっていたので #sky と #ground に直した */
     #stage.strike #flash, #stage.strike .blade, #stage.strike #sky, #stage.strike #ground,
-    .fighter.fallen .face, .fighter.zanshin .face, #stage.result #lead { animation: none !important; }
+    .fighter.fallen .face, .fighter.zanshin .face, .fighter.iai .knife,
+    #stage.result #lead { animation: none !important; }
+    /* 振らないが、抜いて構えた形は見せる */
+    #me.iai  .knife { opacity: 1; transform: translate(150%, 22%) rotate(-45deg); }
+    #foe.iai .knife { opacity: 1; transform: scaleX(-1) translate(150%, 22%) rotate(-45deg); }
     /* 動かさないが、倒れた結果は静止画として見せる */
     #me.fallen  .face { transform: translate(-20%, 15%) rotate(-166deg); filter: brightness(.4) saturate(.45); }
     #foe.fallen .face { transform: scaleX(-1) translate(-20%, 15%) rotate(-166deg); filter: brightness(.4) saturate(.45); }
@@ -357,9 +399,9 @@
     </div>
     <div id="ground">
       <div id="arena" hidden>
-        <div class="fighter" id="me"><div class="face">🥺</div><div class="tag">あなた</div></div>
+        <div class="fighter" id="me"><div class="knife">🔪</div><div class="face">🥺</div><div class="tag">あなた</div></div>
         <div id="ma"></div>
-        <div class="fighter" id="foe"><div class="face">🥺</div><div class="tag">あいて</div></div>
+        <div class="fighter" id="foe"><div class="knife">🔪</div><div class="face">🥺</div><div class="tag">あいて</div></div>
       </div>
       <div id="hud">
         <div id="lead">接続しています</div>
