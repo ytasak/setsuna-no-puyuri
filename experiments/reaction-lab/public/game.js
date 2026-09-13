@@ -239,7 +239,7 @@ document.addEventListener('visibilitychange', () => {
 
 function clearStrike() {
   el.stage.classList.remove('strike', 'left');
-  for (const f of [el.me, el.foe]) f.classList.remove('fallen', 'zanshin');
+  for (const f of [el.me, el.foe]) f.classList.remove('fallen', 'zanshin', 'iai');
 }
 
 function render({ phase, lead, sub = '', action = null, times = null, leadClass = '', arena = false, cue = false }) {
@@ -547,18 +547,22 @@ function onResult(m) {
     sub: notes.filter(Boolean).join('\n'), arena: true,
   });
 
-  // 合図より後なので自由に動かせる。閃光 → 斬撃 → 敗者が吹き飛ぶ → 勝者が残心
+  // 合図より後なので自由に動かせる。閃光 → 抜刀 → 斬撃 → 敗者が倒れる → 勝者が残心
+  //
+  // 刀を抜くのは間に合った側だけ。負けた側は抜く前に斬られている。
+  // 相打ちのときは両者が同時に抜く。
   requestAnimationFrame(() => {
     if (mine.result === 'win') {
       el.stage.classList.add('strike');              // 斬撃は自分（左）から相手（右）へ
-      el.foe.classList.add('fallen'); el.me.classList.add('zanshin');
+      el.foe.classList.add('fallen'); el.me.classList.add('zanshin', 'iai');
       sound.win();
     } else if (mine.result === 'lose') {
       el.stage.classList.add('strike', 'left');      // 相手（右）から自分（左）へ
-      el.me.classList.add('fallen'); el.foe.classList.add('zanshin');
+      el.me.classList.add('fallen'); el.foe.classList.add('zanshin', 'iai');
       sound.lose();
     } else {
       el.stage.classList.add('strike');
+      el.me.classList.add('iai'); el.foe.classList.add('iai');
       sound.draw();
     }
   });
