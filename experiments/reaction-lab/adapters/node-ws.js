@@ -155,6 +155,28 @@ export function startServer(options = {}) {
   const stats = createStats({ onChange: (s) => store.save(s) });
   const restored = stats.restore(store.load(gameDate()));
 
+  // 起動と異常終了を Volume に書き残す。Railway のログを見られなくても、
+  // 「いつ起動して、なぜ落ちたか」が /api/health から読める。
+  //
+  // 落ちる直前の記録を残したいので、握りつぶして動かし続けることはしない。
+  // 状態が壊れたまま走り続けるほうが危ない（対戦中の人が巻き込まれる）。
+  // 記録だけ残して終了し、Railway に再起動させる。
+  const startedAt = Date.now();
+  store.note('boot', `pid=${process.pid} node=${process.version}`);
+  const die = (kind) => (err) => {
+    const detail = err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err);
+    store.note(kind, detail);
+    console.error(`[${kind}]`, detail);
+    try { store.close(); } catch { /* 閉じられなくても終了は続ける */ }
+    process.exit(1);
+  };
+  // テスト（quiet）では入れない。プロセス全体のハンドラなので、
+  // テストランナーの例外まで拾って process.exit してしまう
+  if (!options.quiet && options.trapCrashes !== false) {
+    process.on('uncaughtException', die('crash'));
+    process.on('unhandledRejection', die('rejection'));
+  }
+
   setInterval(() => {
     const keep = gameDate();
     stats.prune();
@@ -172,7 +194,12 @@ export function startServer(options = {}) {
       res.writeHead(200, { 'content-type': 'application/json' });
       // persist は「戦績が残る状態か」。Volume のマウント漏れや書き込み失敗を
       // ログを見にいかずに確かめられるようにしておく（書き込みが一度でも失敗すると false になる）
-      res.end(JSON.stringify({ ok: true, date: gameDate(), persist: store.ok }));
+      res.end(JSON.stringify({
+        ok: true, date: gameDate(), persist: store.ok,
+        // 再起動の頻度と落ちた理由を、ログを見ずに追えるようにしておく
+        uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+        recent: store.recent(8),
+      }));
       return;
     }
 
