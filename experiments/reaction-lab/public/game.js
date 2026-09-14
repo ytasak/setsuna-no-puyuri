@@ -656,7 +656,13 @@ function dojoSend(msg) {
   d.rec.me = msg.flying
     ? { flying: true, R: null }
     : { flying: false, R: msg.R };
-  dojoResolve();
+
+  // **同期で判定してはいけない。** ここは handleInput の send() の中なので、
+  // そのまま RESULT まで走ると、結果を描いたあとに handleInput の続きが
+  // st.phase を 'sent' に戻し、600ms 後にボタンを出す処理が弾かれて進行が止まる。
+  // 相手が先に抜いていた場合（負けとほぼ同着）に必ず起きる。
+  // 呼び出し元が描き終わるのを待ってから判定する
+  dojoTimer(dojoResolve, 0);
 }
 
 function dojoArm() {
