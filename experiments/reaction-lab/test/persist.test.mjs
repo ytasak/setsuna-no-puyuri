@@ -106,6 +106,40 @@ test('保存を切れば書き込みもファイル作成も起きない', () =>
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('起動と落ちた理由が再起動をまたいで残る', () => {
+  const dir = tmp();
+  const file = path.join(dir, 'stats.db');
+
+  const a = openStatsStore(file);
+  a.note('boot', 'pid=1');
+  a.note('crash', 'TypeError: x is not a function');
+  a.close();
+
+  // プロセスが死んでも、次に立ち上がったときに前回の落ち方が読める
+  const b = openStatsStore(file);
+  const rows = b.recent(5);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].kind, 'crash', '新しい順に並ぶ');
+  assert.match(rows[0].detail, /TypeError/);
+  assert.equal(rows[1].kind, 'boot');
+  b.close();
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('診断の記録に失敗しても本体は落ちない', () => {
+  const dir = tmp();
+  const blocker = path.join(dir, 'not-a-dir');
+  fs.writeFileSync(blocker, 'x');
+  const s = openStatsStore(path.join(blocker, 'stats.db'), { log: () => {} });
+
+  // 落ちる直前に呼ばれるので、ここで投げるとクラッシュ処理ごと巻き込む
+  assert.doesNotThrow(() => s.note('crash', 'なにか'));
+  assert.deepEqual(s.recent(5), []);
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // ---------------------------------------------------------------- 再起動をまたぐ
 
 const PORT = 8999 + (process.pid % 100);

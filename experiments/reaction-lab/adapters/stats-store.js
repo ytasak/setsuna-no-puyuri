@@ -42,6 +42,20 @@ const SCHEMA = `
   );
 `;
 
+/**
+ * 起動と異常終了の記録。**戦績とは別の目的**で、同じ Volume に置いている。
+ *
+ * Railway のログを見られない状況でも「いつ起動して、なぜ落ちたか」を追えるようにするため。
+ * プロセスが死んでも残るので、次に立ち上がったときに前回の落ち方が読める。
+ */
+const DIAG_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS diag (
+    at     TEXT NOT NULL,
+    kind   TEXT NOT NULL,
+    detail TEXT
+  );
+`;
+
 const UPSERT = `
   INSERT INTO daily
     (date, token, name, games, win, lose, draw, voided, bestR, bestRAt, streak, bestStreak, bestStreakAt)
@@ -59,7 +73,11 @@ const UPSERT = `
 const n = (v) => (v === undefined ? null : v);
 
 /** 保存しない版。Volume が無い環境とテスト用 */
-const noStore = { save() {}, load() { return []; }, prune() {}, close() {}, get ok() { return false; } };
+const noStore = {
+  save() {}, load() { return []; }, prune() {}, close() {},
+  note() {}, recent() { return []; },
+  get ok() { return false; },
+};
 
 /**
  * 戦績の保存先を開く。開けなければ保存しない版を返す。
@@ -80,6 +98,7 @@ export function openStatsStore(file, { enabled = true, log = console.warn } = {}
     db.exec('PRAGMA journal_mode = WAL');
     db.exec('PRAGMA synchronous = NORMAL');
     db.exec(SCHEMA);
+    db.exec(DIAG_SCHEMA);
   } catch (e) {
     log(`[stats] 保存先を開けないのでメモリだけで動きます: ${file} (${e.message})`);
     try { db?.close(); } catch { /* 開けていないなら閉じるものも無い */ }
@@ -87,6 +106,9 @@ export function openStatsStore(file, { enabled = true, log = console.warn } = {}
   }
 
   const upsert = db.prepare(UPSERT);
+  const noteStmt = db.prepare('INSERT INTO diag (at, kind, detail) VALUES (?, ?, ?)');
+  const recentStmt = db.prepare('SELECT at, kind, detail FROM diag ORDER BY rowid DESC LIMIT ?');
+  const trimStmt = db.prepare('DELETE FROM diag WHERE rowid <= (SELECT MAX(rowid) - 200 FROM diag)');
   const selectDay = db.prepare('SELECT * FROM daily WHERE date = ?');
   const deleteOther = db.prepare('DELETE FROM daily WHERE date <> ?');
 
@@ -127,6 +149,22 @@ export function openStatsStore(file, { enabled = true, log = console.warn } = {}
     /** 当日以外を捨てる。容量回収だけが目的なので、失敗しても困らない */
     prune(keepDate) {
       guard('掃除', () => deleteOther.run(keepDate));
+    },
+
+    /**
+     * 起動・異常終了の記録を1行残す。
+     * ここが落ちるとクラッシュ処理ごと巻き込むので、絶対に投げない。
+     */
+    note(kind, detail = '') {
+      try {
+        noteStmt.run(new Date().toISOString(), String(kind), String(detail).slice(0, 2000));
+        trimStmt.run();   // 直近200行だけ残す
+      } catch { /* 診断のために本体を落とすのは本末転倒 */ }
+    },
+
+    /** 直近の起動・異常終了。新しい順 */
+    recent(limit = 10) {
+      try { return recentStmt.all(limit).map((r) => ({ ...r })); } catch { return []; }
     },
 
     close() {
