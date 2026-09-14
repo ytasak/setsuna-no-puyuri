@@ -196,6 +196,11 @@
     border: 2px solid currentColor; background: rgba(0,0,0,.35); color: inherit; cursor: pointer;
     min-height: 48px; touch-action: manipulation;
   }
+  /* 選択肢は横並び。狭い画面では縦に折り返す */
+  #actions { display: flex; gap: .6rem; flex-wrap: wrap; justify-content: center; }
+  /* 主でないほうは控えめに。押し間違いを減らす */
+  #actions button.sub { border-color: #4a4458; color: #9a90a8; background: transparent; }
+
   .note { font-size: clamp(10px, 2.6vmin, 12px); color: #6a6a7c; }
   .dot { display: inline-block; width: .5em; height: .5em; border-radius: 50%; background: var(--lose); vertical-align: middle; }
   .dot.on { background: var(--win); }
@@ -433,7 +438,7 @@
         <div id="lead">接続しています</div>
         <div id="times" class="times" hidden></div>
         <div id="sub"></div>
-        <button id="action" hidden></button>
+        <div id="actions" hidden></div>
         <div id="mine"></div>
         <div id="status" class="note"></div>
       </div>

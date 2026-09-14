@@ -231,11 +231,17 @@ export function startServer(options = {}) {
 
   /** core が返したコマンドを実行する */
   function exec(room, cmds) {
+    // 待機列から組んだ部屋は1試合で解散する。理由は下の destroyRoom 呼び出しに書いた
+    let releaseQueued = false;
+
     for (const c of cmds) {
       switch (c.type) {
         case 'broadcast':
           for (const cl of room.clients) send(cl, c.msg);
-          if (c.msg.type === 'RESULT') { logResult(room, c.msg); recordResult(room, c.msg); }
+          if (c.msg.type === 'RESULT') {
+            logResult(room, c.msg); recordResult(room, c.msg);
+            if (room.queued) releaseQueued = true;
+          }
           break;
         case 'send': {
           const cl = room.clients.find((x) => x.id === c.to);
@@ -261,6 +267,19 @@ export function startServer(options = {}) {
           break;
       }
     }
+
+    // 待機列から組んだ部屋は、結果を配ったらその場で解散する。
+    //
+    // core は再戦のために部屋を残す（RESOLVED のまま rematchTimeout だけ待つ）。
+    // それは lab の duel モードの作りで、待機列から来た人には合っていなかった。
+    // 部屋が残っていると token が engagedTokens に握られたままになり、
+    // joinQueue が `if (client.room) return` で黙って落ちる。
+    // 結果画面のボタンを押しても JOIN が捨てられ、待機タイマーも仕掛からないので
+    // WAIT_TIMEOUT すら出ず、「相手を探しています」から戻ってこられなかった。
+    //
+    // コマンドを配り終えてから消す。途中で消すと、同じ配列に残っている
+    // broadcast や setTimer が死んだ部屋に対して動く。
+    if (releaseQueued) destroyRoom(room);
   }
 
   /** 判定結果を当日の戦績に取り込み、本人向けの戦績とランキングを返す */
