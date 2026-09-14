@@ -563,8 +563,6 @@ const DOJO_RANKS = [
   { name: '影の師範',     mu: 186, sigma: 25 },
   { name: '無名の名人',   mu: 162, sigma: 20 },
 ];
-const DOJO_KEY = 'puyuri.dojo.rank';
-
 /** Box-Muller。相手の反応時間をばらつかせる。同じ段でも勝ったり負けたりする */
 function gauss() {
   const u = Math.random() || 1e-9;
@@ -578,20 +576,6 @@ function gauss() {
 function dojoSampleR(rank, cfg) {
   const r = rank.mu + gauss() * rank.sigma;
   return Math.min(900, Math.max(cfg.rMin + 12, r));
-}
-
-/**
- * 段位の保存。iframe の中では localStorage が使えないことがあるので、
- * 読めなくても書けなくても動くようにしておく（その場合はセッション中だけ保持）
- */
-function loadDojoRank() {
-  try {
-    const n = Number(localStorage.getItem(DOJO_KEY));
-    return Number.isInteger(n) && n >= 0 && n < DOJO_RANKS.length ? n : 0;
-  } catch { return 0; }
-}
-function saveDojoRank(n) {
-  try { localStorage.setItem(DOJO_KEY, String(n)); } catch { /* 使えないならそのまま */ }
 }
 
 const dojoRules = () => window.__puyuriRules ?? null;
@@ -614,7 +598,9 @@ function enterDojo() {
   }
   leaveDojo();
   st.dojo = {
-    rank: loadDojoRank(), cfg: { ...rules.DEFAULT_CFG },
+    // 段位は持ち越さない。入るたびに一段目から。
+    // 保存すると次に来たときには最後の相手しか残っておらず、登る楽しみが消える
+    rank: 0, cfg: { ...rules.DEFAULT_CFG },
     seq: 0, roundId: 0, timers: [], rec: null, botR: null, goAt: 0,
   };
   dojoFacing();
@@ -632,7 +618,7 @@ function dojoFacing() {
     phase: 'ready', lead: '対 峙', sub: `${d.rank + 1}段　${rank.name}`, arena: true,
     action: [
       { label: '構える', onClick: sendReady },
-      { label: 'やめる', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' },
+      { label: 'タイトルへ', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' },
     ],
   });
   faceTagFoe.textContent = rank.name;
@@ -736,16 +722,15 @@ function dojoNote(line) {
 function dojoAfter(mine) {
   const d = st.dojo;
   const last = d.rank >= DOJO_RANKS.length - 1;
-  const back = { label: 'やめる', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' };
+  const back = { label: 'タイトルへ', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' };
 
   if (mine.result === 'win') {
     if (last) {
-      saveDojoRank(d.rank);                // 皆伝。最後の相手はいつでも挑み直せる
+      // 最後まで登りきった。ここで終わり。挑み直すならまた一段目から
       dojoNote('免許皆伝。すべての相手を破った。');
-      return setActions([{ label: 'もう一度', onClick: dojoFacing }, back]);
+      return setActions([{ ...back, label: 'タイトルへ', variant: '' }]);
     }
     d.rank += 1;
-    saveDojoRank(d.rank);
     dojoNote(`${d.rank + 1}段　${DOJO_RANKS[d.rank].name} が待っている。`);
     return setActions([{ label: '次の相手', onClick: dojoFacing }, back]);
   }
