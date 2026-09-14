@@ -289,6 +289,36 @@ test('誰も構えないまま時間切れになったら、部屋が閉じた�
   }
 });
 
+// ---------------------------------------------------------------- 解散した部屋宛ての入力
+
+test('部屋が解散したあとに届いた入力でサーバーが落ちない', async () => {
+  const a = connect(UUID_A); const b = connect(UUID_B);
+  await Promise.all([a.open(), b.open()]); await sleep(150);
+
+  await playQueuedRound(a, b, [180, 260]);   // 決着させる＝部屋はその場で解散する
+  const dead = a.seen('MATCHED').matchId;
+  const roundId = a.seen('ARMED')?.roundId ?? 1;
+
+  // 遅れて届いた入力。実回線では毎回起きる
+  a.send({ type: 'TAP', matchId: dead, roundId, flying: false, R: 200, rtt: { median: 1 } });
+  a.send({ type: 'READY', matchId: dead });
+  a.send({ type: 'LEAVE', matchId: dead });
+  await sleep(400);
+
+  // client.room が null のときに room.match を読んでいてプロセスごと落ちていた
+  const res = await fetch(`${base}/api/ranking`);
+  assert.equal(res.status, 200, 'サーバーが落ちている');
+  assert.equal(a.ws.readyState, 1, '接続が切れている');
+
+  // 落ちていないだけでなく、そのまま次の試合に行けること
+  a.msgs.length = 0;
+  a.send({ type: 'JOIN' });
+  await sleep(300);
+  assert.ok(a.seen('QUEUED'));
+
+  a.close(); b.close(); await sleep(150);
+});
+
 // ---------------------------------------------------------------- 受信サイズ
 
 test('上限を超えるメッセージを送ってきた接続は閉じられ、サーバーは落ちない', async () => {
