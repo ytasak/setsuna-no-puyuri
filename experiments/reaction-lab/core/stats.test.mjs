@@ -87,6 +87,29 @@ test('勝敗が集計され、最速記録が更新される', () => {
   assert.equal(d.streak, 2); assert.equal(d.bestStreak, 2);
 });
 
+test('当日の集計が試合数・決着・引き分けに分かれる', () => {
+  const s = createStats();
+  s.record(round(1, 'win', 'lose'), tokenOf, AT);
+  s.record(round(2, 'draw', 'draw'), tokenOf, AT);
+  s.record(round(3, 'win', 'lose'), tokenOf, AT);
+  s.record(round(4, 'lose', 'win', { recorded: false }), tokenOf, AT); // 無効試合
+
+  const sm = s.summary(AT);
+  assert.equal(sm.players, 2);
+  assert.equal(sm.matches, 4);
+  assert.equal(sm.decided, 2, '決着した試合は勝ちの総和と一致する');
+  assert.equal(sm.draws, 1);
+  assert.equal(sm.voided, 1);
+  assert.equal(sm.decided + sm.draws + sm.voided, sm.matches, '内訳が試合数に足し合う');
+  assert.equal(sm.drawRate, 0.25);
+});
+
+test('集計に token が混ざらない', () => {
+  const s = createStats();
+  s.record(round(1, 'win', 'lose'), tokenOf, AT);
+  assert.ok(!JSON.stringify(s.summary(AT)).includes('tokA'));
+});
+
 test('onChange は変化した人ぶんだけ呼ばれる', () => {
   const seen = [];
   const s = createStats({ onChange: (row) => seen.push({ ...row }) });
