@@ -319,6 +319,20 @@ test('部屋が解散したあとに届いた入力でサーバーが落ちな�
   a.close(); b.close(); await sleep(150);
 });
 
+// ---------------------------------------------------------------- 道場
+
+test('判定規則がブラウザから読める', async () => {
+  // 道場（一人用）はサーバーに繋がず動くが、判定は本物と同じものを使う。
+  // これが配信できていないと、道場だけ別の基準で勝敗がつく
+  const res = await fetch(`${base}/core/match.js`);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') ?? '', /javascript/);
+  const src = await res.text();
+  assert.match(src, /export function decide/, 'decide が入っていない');
+  assert.match(src, /export const DEFAULT_CFG/, 'DEFAULT_CFG が入っていない');
+  assert.ok(!/^import /m.test(src), '他を import していると単体では読み込めない');
+});
+
 // ---------------------------------------------------------------- 受信サイズ
 
 test('上限を超えるメッセージを送ってきた接続は閉じられ、サーバーは落ちない', async () => {

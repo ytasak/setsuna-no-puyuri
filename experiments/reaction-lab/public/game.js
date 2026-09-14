@@ -228,6 +228,7 @@ const st = {
   daily: null, ranking: null, cookieReceived: true, resetAt: null,
   tRecv: null, tPaint: null, tDisplay: null, frameInterval: null,
   extraTaps: 0, visibilityOk: true, lockUntil: 0,
+  dojo: null,            // 道場にいるあいだだけ入る（下の「道場」節）
 };
 let ws = null, eventSeq = 0;
 
@@ -286,12 +287,16 @@ function showRules() {
   render({
     phase: 'rules', lead: '刹那のぷゆり',
     sub: '「ぷゆ！」が出たら、すぐ押す。\n出る前に押すと負け。',
-    action: { label: 'はじめる', onClick: () => { sound.unlock(); st.started = true; joinQueue(); } },
+    action: [
+      { label: 'はじめる', onClick: () => { sound.unlock(); st.started = true; leaveDojo(); joinQueue(); } },
+      { label: '道場', onClick: () => { sound.unlock(); st.started = true; enterDojo(); }, variant: 'sub' },
+    ],
   });
   el.sub.classList.add('rule');
 }
 
 function joinQueue() {
+  leaveDojo();
   send({ type: 'JOIN' });
   clearStrike();
   el.sub.classList.remove('rule');
@@ -374,6 +379,10 @@ function sendReady() {
 // ---------------------------------------------------------------- 通信
 
 function send(msg) {
+  // 道場はサーバーに繋がない。同じ形のメッセージを自分で受けて自分で返す。
+  // ここで振り替えることで、handleInput から下（計測・演出・音）は
+  // 対人戦とまったく同じ経路を通る
+  if (st.dojo) { dojoSend(msg); return; }
   if (!ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({ eventId: ++eventSeq, ...msg }));
 }
@@ -532,6 +541,212 @@ window.addEventListener('keydown', (e) => {
   handleInput(inputTime(e, tHandler), tHandler);
 });
 
+// ---------------------------------------------------------------- 道場（一人用）
+//
+// 人がいない時間でも遊べるようにするための稽古場。
+// **サーバーには何も送らない。** ARMED / GO / RESULT と同じ形のメッセージを
+// 自分で作って onMessage に流すので、計測・演出・音・抜刀・転倒は
+// 対人戦とまったく同じ経路を通る。
+//
+// 判定は core/match.js の decide() をそのまま使う（rules-bridge.js 経由）。
+// ここで書き直すと対人戦と基準がずれて、稽古の意味が無くなる。
+//
+// サーバーに送らないので、戦績にもランキングにも構造的に入りようがない。
+// docs/set2-3-matchmaking.md §6
+
+/** 段位。名前は「◯◯のぷゆ△」（人間）と別系統にして、人と見間違えないようにする */
+const DOJO_RANKS = [
+  { name: '藁の案山子',   mu: 360, sigma: 55 },
+  { name: '丸太の門番',   mu: 305, sigma: 46 },
+  { name: '白木の門下生', mu: 258, sigma: 38 },
+  { name: '黒鉄の師範代', mu: 218, sigma: 31 },
+  { name: '影の師範',     mu: 186, sigma: 25 },
+  { name: '無名の名人',   mu: 162, sigma: 20 },
+];
+const DOJO_KEY = 'puyuri.dojo.rank';
+
+/** Box-Muller。相手の反応時間をばらつかせる。同じ段でも勝ったり負けたりする */
+function gauss() {
+  const u = Math.random() || 1e-9;
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * Math.random());
+}
+
+/**
+ * 相手の反応時間。生理的下限（R_min）より速くならないよう下を止める。
+ * 止めないと相手が「速すぎ」でフライング負けになり、稽古にならない
+ */
+function dojoSampleR(rank, cfg) {
+  const r = rank.mu + gauss() * rank.sigma;
+  return Math.min(900, Math.max(cfg.rMin + 12, r));
+}
+
+/**
+ * 段位の保存。iframe の中では localStorage が使えないことがあるので、
+ * 読めなくても書けなくても動くようにしておく（その場合はセッション中だけ保持）
+ */
+function loadDojoRank() {
+  try {
+    const n = Number(localStorage.getItem(DOJO_KEY));
+    return Number.isInteger(n) && n >= 0 && n < DOJO_RANKS.length ? n : 0;
+  } catch { return 0; }
+}
+function saveDojoRank(n) {
+  try { localStorage.setItem(DOJO_KEY, String(n)); } catch { /* 使えないならそのまま */ }
+}
+
+const dojoRules = () => window.__puyuriRules ?? null;
+
+function leaveDojo() {
+  if (!st.dojo) return;
+  for (const t of st.dojo.timers) clearTimeout(t);
+  st.dojo = null;
+  st.peer = null;
+  st.matchId = null;
+}
+
+function enterDojo() {
+  const rules = dojoRules();
+  if (!rules) {           // 判定規則を読めていない。本物と違う基準で遊ばせない
+    render({ phase: 'error', lead: '道場を開けませんでした',
+      sub: '読み込みし直してください。',
+      action: { label: 'タイトルへ', onClick: showRules } });
+    return;
+  }
+  leaveDojo();
+  st.dojo = {
+    rank: loadDojoRank(), cfg: { ...rules.DEFAULT_CFG },
+    seq: 0, roundId: 0, timers: [], rec: null, botR: null, goAt: 0,
+  };
+  dojoFacing();
+}
+
+/** 対峙の画面。対人戦の showLobby にあたる */
+function dojoFacing() {
+  const d = st.dojo;
+  const rank = DOJO_RANKS[d.rank];
+  st.peer = rank.name;
+  st.matchId = 'dojo';
+  clearStrike();
+  el.sub.classList.remove('rule');
+  render({
+    phase: 'ready', lead: '対 峙', sub: `${d.rank + 1}段　${rank.name}`, arena: true,
+    action: [
+      { label: '構える', onClick: sendReady },
+      { label: 'やめる', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' },
+    ],
+  });
+  faceTagFoe.textContent = rank.name;
+  faceTagMe.textContent = st.me ?? 'あなた';
+}
+
+const dojoTimer = (fn, ms) => st.dojo?.timers.push(setTimeout(fn, ms));
+
+/** サーバーの代わり。game.js が送ったつもりのメッセージをここで受ける */
+function dojoSend(msg) {
+  const d = st.dojo;
+  if (!d) return;
+  if (msg.type === 'READY') {
+    // すぐ ARMED にすると、sendReady が自分で出す「構えた」に上書きされてしまう。
+    // st.phase が armed にならないと、合図前の入力がフライング扱いにならない。
+    // 相手が構えるまでの間合いも兼ねて、少し置いてから始める
+    return dojoTimer(dojoArm, 220 + Math.random() * 260);
+  }
+  if (msg.type !== 'TAP' || !d.rec || msg.roundId !== d.roundId) return;
+  if (d.rec.me) return;                       // 連打。最初の1回だけ採用する
+  d.rec.me = msg.flying
+    ? { flying: true, R: null }
+    : { flying: false, R: msg.R };
+  dojoResolve();
+}
+
+function dojoArm() {
+  const d = st.dojo;
+  for (const t of d.timers) clearTimeout(t);
+  d.timers = [];
+  d.roundId += 1;
+  d.rec = { me: null, bot: null };
+  d.botR = dojoSampleR(DOJO_RANKS[d.rank], d.cfg);
+
+  const w = d.cfg.wMin + Math.random() * (d.cfg.wMax - d.cfg.wMin);
+  onMessage({ type: 'ARMED', matchId: 'dojo', roundId: d.roundId });
+  dojoTimer(() => {
+    d.goAt = performance.now();
+    onMessage({ type: 'GO', matchId: 'dojo', roundId: d.roundId });
+    // 相手は合図から botR 後に抜く
+    dojoTimer(() => { if (d.rec && !d.rec.bot) { d.rec.bot = { flying: false, R: d.botR }; dojoResolve(); } }, d.botR);
+    // 入力期限。押さなければ無入力で決着する
+    dojoTimer(() => {
+      if (!d.rec) return;
+      if (!d.rec.me) d.rec.me = { noInput: true, R: null };
+      if (!d.rec.bot) d.rec.bot = { flying: false, R: d.botR };
+      dojoResolve();
+    }, d.cfg.inputDeadline);
+  }, w);
+}
+
+/** 両者そろったら判定する。決め方は対人戦と同じ decide() */
+function dojoResolve() {
+  const d = st.dojo;
+  if (!d?.rec || !d.rec.me || !d.rec.bot) return;
+  const { decide } = dojoRules();
+  const rec = d.rec;
+  d.rec = null;
+  for (const t of d.timers) clearTimeout(t);
+  d.timers = [];
+
+  const meId = st.clientId ?? 'me';
+  const side = (id, r) => ({
+    id,
+    flying: !!r.flying,
+    // R_min を下回る申告は予測入力。対人戦と同じ扱いにする
+    tooFast: !r.flying && typeof r.R === 'number' && r.R < d.cfg.rMin,
+    noInput: !!r.noInput,
+    disconnectedBeforeGo: false, disconnectedAfterGo: false,
+    R: r.R,
+  });
+  const a = side(meId, rec.me);
+  const b = side('dojo-foe', rec.bot);
+  const verdict = decide(a, b, d.cfg);
+
+  const player = (p, name) => ({
+    id: p.id, name, result: verdict[p.id],
+    R: p.R === null ? null : Math.round(p.R * 100) / 100,
+    flying: p.flying, tooFast: p.tooFast, noInput: p.noInput, disconnected: false,
+  });
+  onMessage({
+    type: 'RESULT', matchId: 'dojo', roundId: d.roundId,
+    resultId: `dojo:${++d.seq}`, reason: verdict.reason,
+    recorded: false,                       // 稽古は記録しない
+    players: [player(a, st.me ?? 'あなた'), player(b, DOJO_RANKS[d.rank].name)],
+  });
+}
+
+/** 決着の理由や「記録されません」を消さずに、一行足す */
+function dojoNote(line) {
+  el.sub.textContent = [el.sub.textContent, line].filter(Boolean).join('\n');
+}
+
+/** 決着のあとの選択肢。勝てば次の段へ進む */
+function dojoAfter(mine) {
+  const d = st.dojo;
+  const last = d.rank >= DOJO_RANKS.length - 1;
+  const back = { label: 'やめる', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' };
+
+  if (mine.result === 'win') {
+    if (last) {
+      saveDojoRank(d.rank);                // 皆伝。最後の相手はいつでも挑み直せる
+      dojoNote('免許皆伝。すべての相手を破った。');
+      return setActions([{ label: 'もう一度', onClick: dojoFacing }, back]);
+    }
+    d.rank += 1;
+    saveDojoRank(d.rank);
+    dojoNote(`${d.rank + 1}段　${DOJO_RANKS[d.rank].name} が待っている。`);
+    return setActions([{ label: '次の相手', onClick: dojoFacing }, back]);
+  }
+  // 負けても引き分けても同じ相手。段位は下がらない
+  return setActions([{ label: 'もう一度', onClick: dojoFacing }, back]);
+}
+
 // ---------------------------------------------------------------- 決着
 
 const VERDICT = {
@@ -608,12 +823,14 @@ function onResult(m) {
 
   setTimeout(() => {
     if (st.phase !== 'result') return;
-    if (mine.result === 'draw') {
+    if (st.dojo) {
+      dojoAfter(mine);                 // 勝てば次の段へ。サーバーには何も送らない
+    } else if (mine.result === 'draw') {
       // 引き分けは決着していない。部屋は残してあるので、同じ相手ともう一本（SET2-3 §5.3）。
       // ここで「やめる」を出さないのは、決着をつけさせたいから。
       // 押さずに放っておけば60秒で部屋が閉じ、ROOM_CLOSED で抜けられる
       setActions([{ label: '構える', onClick: sendReady }]);
-    } else {
+    } else {  // 決着
       // 決着した試合は部屋を解散してある。「次の相手を探す」か「やめる」かの2択。
       // 連勝は列に戻っても切れない（SET2-6 §6.2）
       setActions([
