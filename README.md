@@ -18,6 +18,7 @@ cd experiments/reaction-lab && npm install && npm start
 | `/embed-test.html` | iframe に埋め込んだ見え方の確認 |
 | `/api/health` | ヘルスチェック |
 | `/api/ranking` | 当日ランキング（JSON）|
+| `/api/summary` | 当日の全体集計。試合数・決着・引き分けの内訳 |
 
 **同じブラウザで2タブ開いても対戦できない。** 同一 Cookie ＝同一 token なので自己対戦の防止が働く。
 2人で試すには `localhost` と `127.0.0.1` で開いて Cookie を分ける。
@@ -113,6 +114,7 @@ Volume は root 所有でマウントされる。アプリを root で動かす�
 | `ALLOWED_ORIGINS` | 無効 | WebSocket の Origin 制限（任意）|
 | `W_MIN` / `W_MAX` | 1000 / 4000 | ランダム待機 [ms] |
 | `T` / `D` / `R_MIN` | 3000 / 20 / 100 | 入力期限・同着幅・生理的下限 [ms] |
+| `REMATCH_TIMEOUT` | 60000 | 引き分けのあと再戦を待つ時間 [ms] |
 
 ## チケット
 

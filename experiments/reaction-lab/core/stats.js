@@ -35,7 +35,16 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
 
   const day = (date) => {
     let d = days.get(date);
-    if (!d) { d = { players: new Map(), seen: new Set() }; days.set(date, d); }
+    if (!d) {
+      d = {
+        players: new Map(),
+        seen: new Set(),
+        // 何ラウンド目の結果だったかの分布。引き分けが何回続いているかを見る。
+        // 引き分けのラウンド2は「2回続いた」、ラウンド4は「4回続いた」を意味する
+        rounds: { decided: new Map(), draw: new Map() },
+      };
+      days.set(date, d);
+    }
     return d;
   };
 
@@ -53,6 +62,14 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
       const d = day(date);
       if (d.seen.has(result.resultId)) return { recorded: false, duplicate: true };
       d.seen.add(result.resultId);
+
+      // 決着までに何ラウンドかかったか。再戦方式が連鎖を短くできているかの判断材料
+      if (result.recorded) {
+        const isDraw = result.players.length > 1 && result.players.every((p) => p.result === 'draw');
+        const bucket = isDraw ? d.rounds.draw : d.rounds.decided;
+        const r = result.roundId ?? 1;
+        bucket.set(r, (bucket.get(r) ?? 0) + 1);
+      }
 
       for (const p of result.players) {
         const token = tokenOf(p.id);
@@ -151,6 +168,12 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
         date, players: all.length,
         matches, decided, draws, voided,
         drawRate: matches ? Number((draws / matches).toFixed(4)) : 0,
+        // 何ラウンド目で決着したか / 何ラウンド目の引き分けか。
+        // draw の 4 が多ければ「4連続で引き分けた」が起きている
+        rounds: {
+          decided: Object.fromEntries([...day(date).rounds.decided].sort((a, b) => a[0] - b[0])),
+          draw: Object.fromEntries([...day(date).rounds.draw].sort((a, b) => a[0] - b[0])),
+        },
         // 内訳が足し合わないときは片側しか記録されていない試合がある
         raw: { games: sum('games'), win: sum('win'), lose: sum('lose'), draw: sum('draw'), voided: sum('voided') },
       };

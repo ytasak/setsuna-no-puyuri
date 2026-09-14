@@ -438,6 +438,13 @@ function onMessage(m) {
       st.peer = null;
       render({ phase: 'peerleft', lead: '相手が去った', sub: '次の相手を待っています。' });
       break;
+    case 'ROOM_CLOSED':
+      // 引き分けのあと誰も構えないまま時間切れになった。ボタンを残すと無反応になるので抜ける。
+      // 構えて待っていた人は「やる気がある側」なので、次の相手を探しに行かせる
+      st.matchId = null; st.peer = null;
+      if (!st.started) break;
+      if (st.phase === 'ready') joinQueue(); else showRules();
+      break;
     case 'ARMED': onArmed(m); break;
     case 'GO': onGo(m); break;
     case 'RESULT': onResult(m); break;
@@ -601,12 +608,19 @@ function onResult(m) {
 
   setTimeout(() => {
     if (st.phase !== 'result') return;
-    // 1試合ごとに部屋は解散する。ここから先は「次の相手を探す」か「やめる」かの2択。
-    // 連勝は列に戻っても切れない（SET2-6 §6.2）
-    setActions([
-      { label: '次の相手', onClick: joinQueue },
-      { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
-    ]);
+    if (mine.result === 'draw') {
+      // 引き分けは決着していない。部屋は残してあるので、同じ相手ともう一本（SET2-3 §5.3）。
+      // ここで「やめる」を出さないのは、決着をつけさせたいから。
+      // 押さずに放っておけば60秒で部屋が閉じ、ROOM_CLOSED で抜けられる
+      setActions([{ label: '構える', onClick: sendReady }]);
+    } else {
+      // 決着した試合は部屋を解散してある。「次の相手を探す」か「やめる」かの2択。
+      // 連勝は列に戻っても切れない（SET2-6 §6.2）
+      setActions([
+        { label: '次の相手', onClick: joinQueue },
+        { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
+      ]);
+    }
   }, 600);
 }
 
