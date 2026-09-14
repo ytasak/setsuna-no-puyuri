@@ -190,6 +190,15 @@ export function startServer(options = {}) {
     const token = readToken(req) ?? randomUUID();
     const headers = { 'set-cookie': cookieHeader(token, isSecure(req)), 'cache-control': 'no-store' };
 
+    // 道場（クライアント単独で動く一人用モード）が判定規則を共有するために、
+    // core/match.js だけを配信する。判定を二重に書くと本物と食い違うため。
+    // 固定パスなので、ユーザー入力がファイルパスに入る余地は無い
+    if (url.pathname === '/core/match.js') {
+      res.writeHead(200, { ...headers, 'content-type': MIME['.js'] });
+      fs.createReadStream(path.join(ROOT, 'core', 'match.js')).pipe(res);
+      return;
+    }
+
     if (url.pathname === '/api/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       // persist は「戦績が残る状態か」。Volume のマウント漏れや書き込み失敗を

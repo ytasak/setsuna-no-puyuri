@@ -19,6 +19,7 @@ cd experiments/reaction-lab && npm install && npm start
 | `/api/health` | ヘルスチェック |
 | `/api/ranking` | 当日ランキング（JSON）|
 | `/api/summary` | 当日の全体集計。試合数・決着・引き分けの内訳 |
+| `/core/match.js` | 判定規則。道場（一人用）がブラウザから読む |
 
 **同じブラウザで2タブ開いても対戦できない。** 同一 Cookie ＝同一 token なので自己対戦の防止が働く。
 2人で試すには `localhost` と `127.0.0.1` で開いて Cookie を分ける。
