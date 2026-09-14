@@ -567,6 +567,10 @@ export function startServer(options = {}) {
   });
 
   function handle(client, msg) {
+    // 部屋はもう無いかもしれない。決着した試合は結果を配った時点で解散するので、
+    // そのあとに届いた遅れメッセージ（TAP・READY・LEAVE）はここで room が null になる。
+    // 以前は結果のあと60秒は部屋が残っていたので表に出ていなかった。
+    // 消えた部屋宛ての入力は、core が古いイベントを捨てるのと同じく黙って無視する
     const room = client.room;
     switch (msg.type) {
       case 'JOIN':
@@ -583,7 +587,7 @@ export function startServer(options = {}) {
         send(client, { type: 'PONG', seq: msg.seq });
         break;
       case 'READY':
-        if (room.match) exec(room, room.match.handle({ ...msg, clientId: client.id }));
+        if (room?.match) exec(room, room.match.handle({ ...msg, clientId: client.id }));
         break;
       case 'SPONG': {
         // サーバー発 PING の応答。RTT はサーバーが自分で測る（自己申告を信用しない）
@@ -601,12 +605,12 @@ export function startServer(options = {}) {
         client.lastForged = !!msg.forged;
         client.lastSynthetic = !!msg.synthetic;
         client.lastServerRtt = rttStats(client.rtts);
-        if (room.match) {
+        if (room?.match) {
           exec(room, room.match.handle({ ...msg, clientId: client.id, serverRtt: client.lastServerRtt }));
         }
         break;
       case 'LEAVE':
-        if (room.match) exec(room, room.match.handle({ type: 'LEAVE', clientId: client.id }));
+        if (room?.match) exec(room, room.match.handle({ type: 'LEAVE', clientId: client.id }));
         break;
       case 'CALIB':
         appendCalib({
