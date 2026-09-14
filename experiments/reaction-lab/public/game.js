@@ -21,7 +21,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   stage: $('stage'), arena: $('arena'), me: $('me'), foe: $('foe'),
   cue: $('cue'), lead: $('lead'), times: $('times'), sub: $('sub'),
-  actions: $('actions'), status: $('status'), mute: $('mute'),
+  actions: $('actions'), status: $('status'), mute: $('mute'), walker: $('walker'),
   mine: $('mine'), board: $('board'), rankFast: $('rankFast'), rankStreak: $('rankStreak'),
   resetIn: $('resetIn'), boardClose: $('boardClose'),
 };
@@ -259,9 +259,15 @@ function setActions(action) {
   }
 }
 
-function render({ phase, lead, sub = '', action = null, times = null, leadClass = '', arena = false, cue = false }) {
+function render({ phase, lead, sub = '', action = null, times = null, leadClass = '', arena = false, cue = false, walking = false }) {
   st.phase = phase;
-  el.stage.className = ['armed', 'cue', 'result'].includes(phase) ? phase : '';
+  // 相手を探しているあいだだけ歩かせる（SET2-5 §3.7）。
+  // phase ではなく明示の指定で切り替える。期限切れの画面も phase は waiting だが、
+  // 「見つかりませんでした」と言いながら歩き続けるのはおかしい
+  el.stage.className = walking ? 'walking'
+    : (['armed', 'cue', 'result'].includes(phase) ? phase : '');
+  el.walker.hidden = !walking;
+  if (walking) el.walker.querySelector('.tag').textContent = st.me ?? '';
   el.arena.hidden = !arena;
   el.cue.hidden = !cue;
   el.lead.textContent = lead;
@@ -289,7 +295,7 @@ function joinQueue() {
   send({ type: 'JOIN' });
   clearStrike();
   el.sub.classList.remove('rule');
-  render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。' });
+  render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。', walking: true });
 }
 
 // ---------------------------------------------------------------- 当日の記録
@@ -348,7 +354,7 @@ function showLobby() {
       arena: true, action: { label: '構える', onClick: sendReady },
     });
   } else {
-    render({ phase: 'waiting', lead: '相手を探しています', sub: 'もうひとり来るのを待っています。' });
+    render({ phase: 'waiting', lead: '相手を探しています', sub: 'もうひとり来るのを待っています。', walking: true });
   }
 }
 
@@ -399,7 +405,7 @@ function onMessage(m) {
       break;
     case 'STATS': applyStats(m); renderMine(); if (!el.board.hidden) renderBoard(); break;
     case 'QUEUED':
-      render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。' });
+      render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。', walking: true });
       break;
     case 'QUEUE_REJECTED':
       render({ phase: 'error', lead: '別のタブで参加しています',
