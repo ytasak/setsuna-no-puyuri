@@ -154,6 +154,56 @@ test('接続時に当日の戦績と残り時間が返る', async () => {
   c.close(); await sleep(100);
 });
 
+// ---------------------------------------------------------------- 試合のあと
+
+/** 待機列で組んだ2人に1試合させて、RESULT が届くまで待つ */
+async function playQueuedRound(a, b) {
+  a.msgs.length = 0; b.msgs.length = 0;
+  a.send({ type: 'JOIN' }); b.send({ type: 'JOIN' });
+  for (let i = 0; i < 40 && !(a.seen('MATCHED') && b.seen('MATCHED')); i++) await sleep(50);
+  assert.ok(a.seen('MATCHED') && b.seen('MATCHED'), 'マッチしていない');
+
+  const armed = (c) => {
+    const id = c.seen('MATCHED').matchId;
+    c.send({ type: 'READY', matchId: id });
+    return id;
+  };
+  const idA = armed(a), idB = armed(b);
+
+  for (const [c, id, delay] of [[a, idA, 180], [b, idB, 240]]) {
+    (async () => {
+      for (let i = 0; i < 100 && !c.seen('GO'); i++) await sleep(20);
+      const round = c.seen('ARMED')?.roundId ?? 1;
+      await sleep(delay);
+      c.send({ type: 'TAP', matchId: id, roundId: round, flying: false, R: delay, rtt: { median: 1 } });
+    })();
+  }
+  for (let i = 0; i < 200 && !(a.seen('RESULT') && b.seen('RESULT')); i++) await sleep(50);
+  assert.ok(a.seen('RESULT'), '結果が出ていない');
+}
+
+test('1試合終わったら列に戻れる。続けて次の相手と組める', async () => {
+  const a = connect(UUID_A); const b = connect(UUID_B);
+  await Promise.all([a.open(), b.open()]); await sleep(150);
+
+  await playQueuedRound(a, b);
+
+  // ここが壊れていた。部屋が RESOLVED のまま残って token を握り続けるので、
+  // JOIN が `if (client.room) return` で黙って捨てられ、QUEUED も返らず、
+  // 待機タイマーも仕掛からないので WAIT_TIMEOUT すら出なかった
+  a.msgs.length = 0;
+  a.send({ type: 'JOIN' });
+  await sleep(300);
+  assert.ok(a.seen('QUEUED'), '列に戻れない（結果画面から抜けられない）');
+  assert.ok(!a.seen('QUEUE_REJECTED'), '自分の直前の試合が別タブ扱いされている');
+
+  // 2試合目も成立する
+  await playQueuedRound(a, b);
+  assert.equal(a.seen('RESULT').players.length, 2);
+
+  a.close(); b.close(); await sleep(100);
+});
+
 // ---------------------------------------------------------------- 受信サイズ
 
 test('上限を超えるメッセージを送ってきた接続は閉じられ、サーバーは落ちない', async () => {

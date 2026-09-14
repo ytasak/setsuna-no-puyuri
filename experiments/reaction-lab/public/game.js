@@ -21,7 +21,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   stage: $('stage'), arena: $('arena'), me: $('me'), foe: $('foe'),
   cue: $('cue'), lead: $('lead'), times: $('times'), sub: $('sub'),
-  action: $('action'), status: $('status'), mute: $('mute'),
+  actions: $('actions'), status: $('status'), mute: $('mute'),
   mine: $('mine'), board: $('board'), rankFast: $('rankFast'), rankStreak: $('rankStreak'),
   resetIn: $('resetIn'), boardClose: $('boardClose'),
 };
@@ -242,6 +242,23 @@ function clearStrike() {
   for (const f of [el.me, el.foe]) f.classList.remove('fallen', 'zanshin', 'iai');
 }
 
+/**
+ * 選択肢を出す。1つでも複数でも同じ形で渡せる。
+ * `variant: 'sub'` を付けたものは控えめな見た目になる（押し間違い対策）
+ */
+function setActions(action) {
+  const list = action ? (Array.isArray(action) ? action : [action]) : [];
+  el.actions.replaceChildren();
+  el.actions.hidden = list.length === 0;
+  for (const a of list) {
+    const b = document.createElement('button');
+    b.textContent = a.label;
+    if (a.variant) b.className = a.variant;
+    b.onclick = a.onClick;
+    el.actions.appendChild(b);
+  }
+}
+
 function render({ phase, lead, sub = '', action = null, times = null, leadClass = '', arena = false, cue = false }) {
   st.phase = phase;
   el.stage.className = ['armed', 'cue', 'result'].includes(phase) ? phase : '';
@@ -252,8 +269,7 @@ function render({ phase, lead, sub = '', action = null, times = null, leadClass 
   el.sub.textContent = sub;
   el.times.hidden = !times;
   if (times) el.times.innerHTML = times.map(([k, v]) => `<div class="k">${k}</div><div class="v">${v}</div>`).join('');
-  if (action) { el.action.hidden = false; el.action.textContent = action.label; el.action.onclick = action.onClick; }
-  else { el.action.hidden = true; el.action.onclick = null; }
+  setActions(action);
   renderMine();
 }
 
@@ -340,7 +356,7 @@ function sendReady() {
   // 書体の読み込み中にラウンドが始まると、合図の字形が途中で入れ替わりうる。
   // 描画が遅れて計測に影響するのを避けるため、載りきってから構えさせる
   if (document.fonts && document.fonts.status !== 'loaded') {
-    el.action.hidden = true;
+    setActions(null);
     document.fonts.ready.then(sendReady);
     return;
   }
@@ -391,12 +407,18 @@ function onMessage(m) {
       break;
     case 'WAIT_TIMEOUT':
       render({ phase: 'waiting', lead: '相手が見つかりませんでした', sub: '',
-        action: { label: 'もう一度さがす', onClick: joinQueue } });
+        action: [
+          { label: 'もう一度さがす', onClick: joinQueue },
+          { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
+        ] });
       break;
     case 'READY_TIMEOUT':
       st.matchId = null; st.peer = null;
       render({ phase: 'waiting', lead: '相手が構えませんでした', sub: '',
-        action: { label: 'もう一度さがす', onClick: joinQueue } });
+        action: [
+          { label: 'もう一度さがす', onClick: joinQueue },
+          { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
+        ] });
       break;
     case 'FULL': render({ phase: 'error', lead: 'この部屋は満員です', sub: '別の部屋を開いてください。' }); break;
     case 'MATCHED':
@@ -447,7 +469,7 @@ function onGo(m) {
     el.lead.className = '';
     el.sub.textContent = '';
     el.times.hidden = true;
-    el.action.hidden = true;
+    setActions(null);
     st.phase = 'cue';
     // 描画を書き終えてから鳴らす。音の生成で paint を遅らせない
     sound.cue();
@@ -484,7 +506,7 @@ function handleInput(tInput, tHandler) {
 }
 
 el.stage.addEventListener('pointerdown', (e) => {
-  if (e.target === el.action || e.target === el.mute) return;
+  if (el.actions.contains(e.target) || e.target === el.mute) return;
   const tHandler = performance.now();
   handleInput(inputTime(e, tHandler), tHandler);
 }, { passive: true });
@@ -573,9 +595,12 @@ function onResult(m) {
 
   setTimeout(() => {
     if (st.phase !== 'result') return;
-    el.action.hidden = false;
-    el.action.textContent = 'もう一度';
-    el.action.onclick = joinQueue;   // 1試合ごとに列へ戻る。連勝は切れない
+    // 1試合ごとに部屋は解散する。ここから先は「次の相手を探す」か「やめる」かの2択。
+    // 連勝は列に戻っても切れない（SET2-6 §6.2）
+    setActions([
+      { label: '次の相手', onClick: joinQueue },
+      { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
+    ]);
   }, 600);
 }
 
