@@ -550,7 +550,11 @@ function onResult(m) {
   // 合図より後なので自由に動かせる。閃光 → 抜刀 → 斬撃 → 敗者が倒れる → 勝者が残心
   //
   // 刀を抜くのは間に合った側だけ。負けた側は抜く前に斬られている。
-  // 相打ちのときは両者が同時に抜く。
+  // 相打ち（同着・双方フライング・双方無入力）のときだけ両者が同時に抜く。
+  //
+  // ノーゲーム（void）と計測のみ（solo）では何も出さない。
+  // GO 前に相手が切断しただけなのに二人が抜き合うのはおかしい。
+  // 斬り合いが成立しなかった試合なので、静かに結果だけ出す。
   requestAnimationFrame(() => {
     if (mine.result === 'win') {
       el.stage.classList.add('strike');              // 斬撃は自分（左）から相手（右）へ
@@ -560,7 +564,7 @@ function onResult(m) {
       el.stage.classList.add('strike', 'left');      // 相手（右）から自分（左）へ
       el.me.classList.add('fallen'); el.foe.classList.add('zanshin', 'iai');
       sound.lose();
-    } else {
+    } else if (mine.result === 'draw') {
       el.stage.classList.add('strike');
       el.me.classList.add('iai'); el.foe.classList.add('iai');
       sound.draw();
