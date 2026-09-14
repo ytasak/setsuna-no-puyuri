@@ -174,6 +174,14 @@ export function startServer(options = {}) {
       return;
     }
 
+    // 当日の全体集計。同着幅 D の妥当性を実データで見るため（SET2-4 §6）。
+    // 合計しか出さないので、誰がどうだったかは分からない
+    if (url.pathname === '/api/summary') {
+      res.writeHead(200, { ...headers, 'content-type': 'application/json' });
+      res.end(JSON.stringify(stats.summary()));
+      return;
+    }
+
     if (url.pathname === '/api/ranking') {
       res.writeHead(200, { ...headers, 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(stats.ranking()));

@@ -128,6 +128,34 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
       return { date, fastest, streak, players: all.length };
     },
 
+    /**
+     * 当日の全体集計。個人は出さず、傾向だけ見る。
+     *
+     * 1試合につき2人ぶん記録されるので、試合数の系統は2で割る。
+     * 決着した試合は「勝ち」がちょうど1つなので、勝ちの総和がそのまま決着数になる。
+     *
+     * 同着幅 D をこのままにしてよいか（引き分けが多すぎないか）を
+     * 実データで判断するために足した。合計しか出さないので token は漏れない。
+     */
+    summary(at = now()) {
+      const date = gameDate(at);
+      const all = [...day(date).players.values()];
+      const sum = (k) => all.reduce((t, s) => t + (s[k] ?? 0), 0);
+
+      const matches = sum('games') / 2;
+      const draws = sum('draw') / 2;
+      const voided = sum('voided') / 2;
+      const decided = sum('win');
+
+      return {
+        date, players: all.length,
+        matches, decided, draws, voided,
+        drawRate: matches ? Number((draws / matches).toFixed(4)) : 0,
+        // 内訳が足し合わないときは片側しか記録されていない試合がある
+        raw: { games: sum('games'), win: sum('win'), lose: sum('lose'), draw: sum('draw'), voided: sum('voided') },
+      };
+    },
+
     /** 容量回収だけが目的。動かなくても正しさには影響しない */
     prune(at = now()) {
       const keep = gameDate(at);
