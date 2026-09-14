@@ -119,6 +119,8 @@ export function startServer(options = {}) {
     inputDeadline: num(process.env.T, DEFAULT_CFG.inputDeadline),
     tieBand: num(process.env.D, DEFAULT_CFG.tieBand),
     rMin: num(process.env.R_MIN, DEFAULT_CFG.rMin),
+    // 引き分けのあと再戦を待つ時間。過ぎたら部屋を閉じる（SET2-3 §5.3）
+    rematchTimeout: num(process.env.REMATCH_TIMEOUT, DEFAULT_CFG.rematchTimeout),
     ...options.cfg,
   };
   const port = num(process.env.PORT, options.port ?? 8787);
@@ -248,7 +250,12 @@ export function startServer(options = {}) {
           for (const cl of room.clients) send(cl, c.msg);
           if (c.msg.type === 'RESULT') {
             logResult(room, c.msg); recordResult(room, c.msg);
-            if (room.queued) releaseQueued = true;
+            // 引き分けは決着していないので、同じ相手のまま部屋を残して再戦させる。
+            // 決着した試合だけ解散して列に戻す（SET2-3 §5.3）
+            const isDraw = c.msg.players.length > 1
+              && c.msg.players.every((p) => p.result === 'draw');
+            room.awaitingRematch = Boolean(room.queued && isDraw);
+            if (room.queued && !isDraw) releaseQueued = true;
           }
           break;
         case 'send': {
@@ -521,6 +528,13 @@ export function startServer(options = {}) {
       console.log(`[${r.id}] - ${client.name} (${client.id})`);
       if (r.match) exec(r, r.match.handle({ type: 'DISCONNECT', clientId: client.id }));
       if (r.clients.length === 0) { clearAllTimers(r); rooms.delete(r.id); }
+      // 引き分けの再戦を待っているところで相手が抜けた。決着させる相手がもういないので、
+      // 残った人はその場に置かずに次の相手を探しに行かせる
+      else if (r.queued && r.awaitingRematch && rooms.has(r.id)) {
+        const left = r.clients[0];
+        destroyRoom(r);
+        joinQueue(left);
+      }
       tryPair();
     });
   });

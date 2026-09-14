@@ -330,6 +330,9 @@ class Match {
       { type: 'clearTimer', name: TIMER.GO },
       { type: 'clearTimer', name: TIMER.DEADLINE },
       { type: 'clearTimer', name: TIMER.IDLE },
+      // 閉じたことを必ず伝える。黙って消すと、結果画面に残っている側のボタンが
+      // 無反応になり、リロードするまで戻れなくなる（SET2-3 §5.2 と同じ落とし穴）
+      { type: 'broadcast', msg: { type: 'ROOM_CLOSED', matchId: this.matchId } },
       { type: 'closed', matchId: this.matchId },
     ];
   }

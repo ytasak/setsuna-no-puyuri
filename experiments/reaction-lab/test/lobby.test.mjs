@@ -14,8 +14,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const server = startServer({ port: PORT, csv: false, persist: false, quiet: true, cfg: { wMin: 60, wMax: 120 } });
 test.after(() => server.closeAll());
 
-function connect(token) {
-  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/?mode=queue`, {
+function connect(token, port = PORT) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/?mode=queue`, {
     headers: token ? { cookie: `puyuri_token=${token}` } : {},
   });
   const msgs = [];
@@ -157,7 +157,7 @@ test('接続時に当日の戦績と残り時間が返る', async () => {
 // ---------------------------------------------------------------- 試合のあと
 
 /** 待機列で組んだ2人に1試合させて、RESULT が届くまで待つ */
-async function playQueuedRound(a, b) {
+async function playQueuedRound(a, b, taps = [180, 240]) {
   a.msgs.length = 0; b.msgs.length = 0;
   a.send({ type: 'JOIN' }); b.send({ type: 'JOIN' });
   for (let i = 0; i < 40 && !(a.seen('MATCHED') && b.seen('MATCHED')); i++) await sleep(50);
@@ -170,7 +170,7 @@ async function playQueuedRound(a, b) {
   };
   const idA = armed(a), idB = armed(b);
 
-  for (const [c, id, delay] of [[a, idA, 180], [b, idB, 240]]) {
+  for (const [c, id, delay] of [[a, idA, taps[0]], [b, idB, taps[1]]]) {
     (async () => {
       for (let i = 0; i < 100 && !c.seen('GO'); i++) await sleep(20);
       const round = c.seen('ARMED')?.roundId ?? 1;
@@ -202,6 +202,91 @@ test('1試合終わったら列に戻れる。続けて次の相手と組める'
   assert.equal(a.seen('RESULT').players.length, 2);
 
   a.close(); b.close(); await sleep(100);
+});
+
+// ---------------------------------------------------------------- 引き分けの再戦
+
+/** 差が D（20ms）以内なら同着。実測の引き分け率は 18%（SET2-4 §6）*/
+const TIE = [200, 205];
+
+test('引き分けのあとは列に戻らず、同じ相手と再戦できる', async () => {
+  const a = connect(UUID_A); const b = connect(UUID_B);
+  await Promise.all([a.open(), b.open()]); await sleep(150);
+
+  await playQueuedRound(a, b, TIE);
+  const first = a.seen('RESULT');
+  assert.ok(first.players.every((p) => p.result === 'draw'), `引き分けになっていない: ${first.reason}`);
+  const matchId = a.seen('MATCHED').matchId;
+
+  // 部屋を残してあるので、そのまま構えれば次のラウンドが始まる
+  a.msgs.length = 0; b.msgs.length = 0;
+  a.send({ type: 'READY', matchId }); b.send({ type: 'READY', matchId });
+  for (let i = 0; i < 60 && !a.seen('ARMED'); i++) await sleep(50);
+
+  assert.ok(a.seen('ARMED'), '再戦が始まらない');
+  assert.ok(!a.seen('QUEUED'), '引き分けなのに列へ戻されている');
+  assert.equal(a.seen('ARMED').matchId, matchId, '別の部屋になっている');
+
+  a.close(); b.close(); await sleep(150);
+});
+
+test('決着した試合では部屋が残らない', async () => {
+  const a = connect(UUID_A); const b = connect(UUID_B);
+  await Promise.all([a.open(), b.open()]); await sleep(150);
+
+  await playQueuedRound(a, b, [180, 260]);  // 差80ms。決着する
+  assert.ok(!a.seen('RESULT').players.every((p) => p.result === 'draw'));
+
+  a.msgs.length = 0;
+  a.send({ type: 'JOIN' });
+  await sleep(300);
+  assert.ok(a.seen('QUEUED'), '決着したのに列に戻れない');
+
+  a.close(); b.close(); await sleep(150);
+});
+
+test('再戦を待っているあいだに相手が抜けたら、残った人は列に戻る', async () => {
+  const a = connect(UUID_A); const b = connect(UUID_B);
+  await Promise.all([a.open(), b.open()]); await sleep(150);
+
+  await playQueuedRound(a, b, TIE);
+  assert.ok(a.seen('RESULT').players.every((p) => p.result === 'draw'));
+
+  a.msgs.length = 0;
+  b.close();                       // 決着させる相手がいなくなった
+  for (let i = 0; i < 60 && !a.seen('QUEUED'); i++) await sleep(50);
+  assert.ok(a.seen('QUEUED'), '結果画面に取り残されている');
+
+  a.close(); await sleep(150);
+});
+
+test('誰も構えないまま時間切れになったら、部屋が閉じたと伝わる', async () => {
+  // 本番は60秒。待てないので短くした部屋を別に立てる
+  const port = PORT + 2;
+  const srv = startServer({
+    port, csv: false, persist: false, quiet: true,
+    cfg: { wMin: 60, wMax: 120, rematchTimeout: 400 },
+  });
+  try {
+    await sleep(200);
+    const a = connect(UUID_A, port); const b = connect(UUID_B, port);
+    await Promise.all([a.open(), b.open()]); await sleep(150);
+
+    await playQueuedRound(a, b, TIE);
+    assert.ok(a.seen('RESULT').players.every((p) => p.result === 'draw'));
+
+    a.msgs.length = 0; b.msgs.length = 0;
+    // 何も押さずに放っておく
+    for (let i = 0; i < 40 && !a.seen('ROOM_CLOSED'); i++) await sleep(50);
+
+    // 黙って消すと、結果画面のボタンが無反応のまま取り残される
+    assert.ok(a.seen('ROOM_CLOSED'), '閉じたことが伝わらない');
+    assert.ok(b.seen('ROOM_CLOSED'), '相手側にも伝わっていない');
+
+    a.close(); b.close(); await sleep(150);
+  } finally {
+    await srv.closeAll();
+  }
 });
 
 // ---------------------------------------------------------------- 受信サイズ
