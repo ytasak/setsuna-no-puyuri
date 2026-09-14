@@ -66,8 +66,9 @@ const AT = new Date('2026-09-13T03:00:00Z'); // JST 12:00
 const tokenOf = (id) => ({ a: 'tokA', b: 'tokB' }[id]);
 
 function round(n, aRes, bRes, opts = {}) {
+  const roundId = opts.roundId ?? 1;
   return {
-    resultId: `m${n}:1`, recorded: opts.recorded !== false,
+    resultId: `m${n}:${roundId}`, roundId, recorded: opts.recorded !== false,
     players: [
       { id: 'a', result: aRes, R: opts.aR ?? 200, Rsource: opts.aSrc ?? 'claimed',
         flying: false, tooFast: false, noInput: false, disconnected: false },
@@ -102,6 +103,25 @@ test('当日の集計が試合数・決着・引き分けに分かれる', () =>
   assert.equal(sm.voided, 1);
   assert.equal(sm.decided + sm.draws + sm.voided, sm.matches, '内訳が試合数に足し合う');
   assert.equal(sm.drawRate, 0.25);
+});
+
+test('何ラウンド目で決着したかを数える', () => {
+  const s = createStats();
+  // 1本で決着
+  s.record(round(1, 'win', 'lose'), tokenOf, AT);
+  // 2本目で決着（1回引き分けてから）
+  s.record(round(2, 'draw', 'draw', { roundId: 1 }), tokenOf, AT);
+  s.record(round(2, 'win', 'lose', { roundId: 2 }), tokenOf, AT);
+  // 4本目まで引き分けが続いた（クレームで報告されたかたち）
+  s.record(round(3, 'draw', 'draw', { roundId: 1 }), tokenOf, AT);
+  s.record(round(3, 'draw', 'draw', { roundId: 2 }), tokenOf, AT);
+  s.record(round(3, 'draw', 'draw', { roundId: 3 }), tokenOf, AT);
+  s.record(round(3, 'draw', 'draw', { roundId: 4 }), tokenOf, AT);
+
+  const { rounds } = s.summary(AT);
+  assert.deepEqual(rounds.decided, { 1: 1, 2: 1 });
+  // 引き分けは m2 の1本目と、m3 の1〜4本目
+  assert.deepEqual(rounds.draw, { 1: 2, 2: 1, 3: 1, 4: 1 }, '4連続の引き分けが見えない');
 });
 
 test('集計に token が混ざらない', () => {
