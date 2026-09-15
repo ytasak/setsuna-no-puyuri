@@ -133,6 +133,27 @@ test('待機中に切断すると列から外れ、残った人は次の相手�
   b.close(); c.close(); await sleep(150);
 });
 
+test('待機中に「タイトルへ」で列から抜けられ、そのあと入り直せる', async () => {
+  // 待つのは最大90秒。抜ける手段が無いと、その間タブを閉じるしかなくなる
+  const a = connect(UUID_A); await a.open(); await sleep(120);
+  a.send({ type: 'JOIN' }); await sleep(200);
+  assert.ok(a.seen('QUEUED'), '列に入れていない');
+
+  a.msgs.length = 0;
+  a.send({ type: 'LEAVE_QUEUE' }); await sleep(200);
+  assert.ok(a.seen('QUEUE_LEFT'), '抜けたことが返らない');
+
+  // 列に残っていれば、あとから来た B と組まれてしまう
+  const b = connect(UUID_B); await b.open(); await sleep(120);
+  b.send({ type: 'JOIN' }); await sleep(300);
+  assert.equal(a.seen('MATCHED'), undefined, '抜けたはずなのに組まれた');
+
+  // token が握られたままになっていないこと
+  a.send({ type: 'JOIN' }); await sleep(400);
+  assert.ok(a.seen('MATCHED'), '入り直せない');
+  a.close(); b.close(); await sleep(150);
+});
+
 // ---------------------------------------------------------------- 戦績
 
 test('ランキング API は token を出さない', async () => {

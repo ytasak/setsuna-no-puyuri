@@ -283,6 +283,10 @@ function render({ phase, lead, sub = '', action = null, times = null, leadClass 
 const setStatus = (text, ok) => { el.status.innerHTML = `<span class="dot${ok ? ' on' : ''}"></span> ${text}`; };
 
 function showRules() {
+  // ここはタイトル。列にも部屋にも属していない状態へ戻す。
+  // started を落としておかないと、列を抜けた直後に届いた MATCHED で
+  // タイトルから対峙へ引き戻される
+  st.started = false;
   clearStrike();
   render({
     phase: 'rules', lead: '刹那のぷゆり',
@@ -300,7 +304,27 @@ function joinQueue() {
   send({ type: 'JOIN' });
   clearStrike();
   el.sub.classList.remove('rule');
-  render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。', walking: true });
+  showSearching('見つかるまで少し待ちます。');
+}
+
+/**
+ * 相手を探している画面。
+ *
+ * **必ず抜け道を置く。** 待つのは最大90秒（サーバーの WAIT_LIMIT）で、
+ * そのあいだ選択肢が何も無いと、閉じる以外にできることが無くなる
+ */
+function showSearching(sub) {
+  render({
+    phase: 'waiting', lead: '相手を探しています', sub, walking: true,
+    action: { label: 'タイトルへ', onClick: leaveQueue, variant: 'sub' },
+  });
+}
+
+/** 探すのをやめる。列から抜けたことはサーバーにも伝える */
+function leaveQueue() {
+  sendToServer({ type: 'LEAVE_QUEUE' });
+  st.matchId = null; st.peer = null;
+  showRules();
 }
 
 // ---------------------------------------------------------------- 当日の記録
@@ -359,7 +383,7 @@ function showLobby() {
       arena: true, action: { label: '構える', onClick: sendReady },
     });
   } else {
-    render({ phase: 'waiting', lead: '相手を探しています', sub: 'もうひとり来るのを待っています。', walking: true });
+    showSearching('もうひとり来るのを待っています。');
   }
 }
 
@@ -383,6 +407,11 @@ function send(msg) {
   // ここで振り替えることで、handleInput から下（計測・演出・音）は
   // 対人戦とまったく同じ経路を通る
   if (st.dojo) { dojoSend(msg); return; }
+  sendToServer(msg);
+}
+
+/** 道場にいても必ずサーバーへ送る。列や部屋から抜けるときに使う */
+function sendToServer(msg) {
   if (!ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({ eventId: ++eventSeq, ...msg }));
 }
@@ -414,7 +443,7 @@ function onMessage(m) {
       break;
     case 'STATS': applyStats(m); renderMine(); if (!el.board.hidden) renderBoard(); break;
     case 'QUEUED':
-      render({ phase: 'waiting', lead: '相手を探しています', sub: '見つかるまで少し待ちます。', walking: true });
+      showSearching('見つかるまで少し待ちます。');
       break;
     case 'QUEUE_REJECTED':
       render({ phase: 'error', lead: '別のタブで参加しています',
@@ -437,10 +466,13 @@ function onMessage(m) {
       break;
     case 'FULL': render({ phase: 'error', lead: 'この部屋は満員です', sub: '別の部屋を開いてください。' }); break;
     case 'MATCHED':
+      // 「タイトルへ」を押した直後に組まれることがある。黙って放っておくと
+      // 相手は構えの期限（30秒）まで誰も来ない画面で待たされるので、抜けたと伝える
+      if (!st.started) { sendToServer({ type: 'LEAVE', matchId: m.matchId }); break; }
       st.matchId = m.matchId;
       st.peer = (m.peer ?? [])[0] ?? 'あいて';
       if (m.you) st.me = m.you;
-      if (st.started) showLobby();
+      showLobby();
       break;
     case 'STATE': if (m.matchId) st.matchId = m.matchId; break;
     case 'PEER_LEFT':
