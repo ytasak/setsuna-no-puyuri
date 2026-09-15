@@ -154,6 +154,24 @@ test('待機中に「タイトルへ」で列から抜けられ、そのあと�
   a.close(); b.close(); await sleep(150);
 });
 
+test('組まれた直後に相手が抜けても、残った人はすぐ次を探せる', async () => {
+  const a = connect(UUID_A); const b = connect(UUID_B);
+  await Promise.all([a.open(), b.open()]); await sleep(150);
+  a.send({ type: 'JOIN' }); await sleep(120);
+  b.send({ type: 'JOIN' }); await sleep(400);
+  const id = a.seen('MATCHED')?.matchId;
+  assert.ok(id, 'マッチしていない');
+
+  a.msgs.length = 0; b.msgs.length = 0;
+  b.send({ type: 'LEAVE', matchId: id }); await sleep(250);
+  assert.ok(a.seen('PEER_LEFT'), '相手が抜けたと伝わらない');
+
+  // 部屋を残すと token を握られたままになり、JOIN が黙って捨てられる
+  a.send({ type: 'JOIN' }); await sleep(300);
+  assert.ok(a.seen('QUEUED'), '相手が去った画面から次を探しに行けない');
+  a.close(); b.close(); await sleep(150);
+});
+
 // ---------------------------------------------------------------- 戦績
 
 test('ランキング API は token を出さない', async () => {

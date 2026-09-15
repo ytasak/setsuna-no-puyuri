@@ -476,8 +476,16 @@ function onMessage(m) {
       break;
     case 'STATE': if (m.matchId) st.matchId = m.matchId; break;
     case 'PEER_LEFT':
-      st.peer = null;
-      render({ phase: 'peerleft', lead: '相手が去った', sub: '次の相手を待っています。' });
+      // 自分が抜けたときも自分に届く。タイトルにいるなら何も出さない
+      st.peer = null; st.matchId = null;
+      if (!st.started) break;
+      // 待機列から組んだ部屋は片方が抜けた時点で成立しない。
+      // 「次の相手を待っています」と言ったまま選択肢を出さないと、ここも行き止まりになる
+      render({ phase: 'peerleft', lead: '相手が去った', sub: '',
+        action: [
+          { label: 'もう一度さがす', onClick: joinQueue },
+          { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
+        ] });
       break;
     case 'ROOM_CLOSED':
       // 引き分けのあと誰も構えないまま時間切れになった。ボタンを残すと無反応になるので抜ける。

@@ -620,6 +620,12 @@ export function startServer(options = {}) {
         break;
       case 'LEAVE':
         if (room?.match) exec(room, room.match.handle({ type: 'LEAVE', clientId: client.id }));
+        // 待機列から組んだ部屋は、片方が抜けた時点で成立しない。
+        // 残したままにすると両者の token が engagedTokens に握られたままになり、
+        // 残った人の「もう一度さがす」が joinQueue の `if (client.room) return` で
+        // 黙って落ちる（上の releaseQueued と同じ落とし穴）。
+        // 決着して既に解散済みのこともあるので、残っているときだけ消す
+        if (room?.queued && rooms.has(room.id)) destroyRoom(room);
         break;
       case 'CALIB':
         appendCalib({
