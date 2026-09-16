@@ -11,17 +11,11 @@
 
 'use strict';
 
-const qs = new URLSearchParams(location.search);
-const params = {
-  room: qs.get('room') || 'play',
-  name: qs.get('name') || 'ぷゆ' + Math.random().toString(36).slice(2, 5),
-};
-
 const $ = (id) => document.getElementById(id);
 const el = {
   stage: $('stage'), arena: $('arena'), me: $('me'), foe: $('foe'),
   cue: $('cue'), lead: $('lead'), times: $('times'), sub: $('sub'),
-  actions: $('actions'), status: $('status'), mute: $('mute'), walker: $('walker'),
+  actions: $('actions'), status: $('status'), mute: $('mute'),
   mine: $('mine'), board: $('board'), rankFast: $('rankFast'), rankStreak: $('rankStreak'),
   resetIn: $('resetIn'), boardClose: $('boardClose'),
 };
@@ -223,7 +217,7 @@ function inputTime(e, fallback) {
 
 const st = {
   phase: 'connecting',
-  matchId: null, roundId: null, clientId: null, peer: null, started: false,
+  matchId: null, roundId: null, clientId: null, peer: null,
   me: null,              // その日限りの二つ名
   daily: null, ranking: null, cookieReceived: true, resetAt: null,
   tRecv: null, tPaint: null, tDisplay: null, frameInterval: null,
@@ -260,15 +254,9 @@ function setActions(action) {
   }
 }
 
-function render({ phase, lead, sub = '', action = null, times = null, leadClass = '', arena = false, cue = false, walking = false }) {
+function render({ phase, lead, sub = '', action = null, times = null, leadClass = '', arena = false, cue = false }) {
   st.phase = phase;
-  // 相手を探しているあいだだけ歩かせる（SET2-5 §3.7）。
-  // phase ではなく明示の指定で切り替える。期限切れの画面も phase は waiting だが、
-  // 「見つかりませんでした」と言いながら歩き続けるのはおかしい
-  el.stage.className = walking ? 'walking'
-    : (['armed', 'cue', 'result'].includes(phase) ? phase : '');
-  el.walker.hidden = !walking;
-  if (walking) el.walker.querySelector('.tag').textContent = st.me ?? '';
+  el.stage.className = ['armed', 'cue', 'result'].includes(phase) ? phase : '';
   el.arena.hidden = !arena;
   el.cue.hidden = !cue;
   el.lead.textContent = lead;
@@ -283,48 +271,15 @@ function render({ phase, lead, sub = '', action = null, times = null, leadClass 
 const setStatus = (text, ok) => { el.status.innerHTML = `<span class="dot${ok ? ' on' : ''}"></span> ${text}`; };
 
 function showRules() {
-  // ここはタイトル。列にも部屋にも属していない状態へ戻す。
-  // started を落としておかないと、列を抜けた直後に届いた MATCHED で
-  // タイトルから対峙へ引き戻される
-  st.started = false;
+  // ここはタイトル。道場から出た状態へ戻す
+  leaveDojo();
   clearStrike();
   render({
     phase: 'rules', lead: '刹那のぷゆり',
     sub: '「ぷゆ！」が出たら、すぐ押す。\n出る前に押すと負け。',
-    action: [
-      { label: 'はじめる', onClick: () => { sound.unlock(); st.started = true; leaveDojo(); joinQueue(); } },
-      { label: '道場', onClick: () => { sound.unlock(); st.started = true; enterDojo(); }, variant: 'sub' },
-    ],
+    action: { label: 'はじめる', onClick: () => { sound.unlock(); enterDojo(); } },
   });
   el.sub.classList.add('rule');
-}
-
-function joinQueue() {
-  leaveDojo();
-  send({ type: 'JOIN' });
-  clearStrike();
-  el.sub.classList.remove('rule');
-  showSearching('見つかるまで少し待ちます。');
-}
-
-/**
- * 相手を探している画面。
- *
- * **必ず抜け道を置く。** 待つのは最大90秒（サーバーの WAIT_LIMIT）で、
- * そのあいだ選択肢が何も無いと、閉じる以外にできることが無くなる
- */
-function showSearching(sub) {
-  render({
-    phase: 'waiting', lead: '相手を探しています', sub, walking: true,
-    action: { label: 'タイトルへ', onClick: leaveQueue, variant: 'sub' },
-  });
-}
-
-/** 探すのをやめる。列から抜けたことはサーバーにも伝える */
-function leaveQueue() {
-  sendToServer({ type: 'LEAVE_QUEUE' });
-  st.matchId = null; st.peer = null;
-  showRules();
 }
 
 // ---------------------------------------------------------------- 当日の記録
@@ -368,24 +323,9 @@ function renderBoard() {
   el.resetIn.textContent = `記録は毎日 0 時にリセットされます（あと ${h}時間${mi}分）`;
 }
 
-function showBoard() { send({ type: 'STATS_REQ' }); renderBoard(); el.board.hidden = false; }
+function showBoard() { sendToServer({ type: 'STATS_REQ' }); renderBoard(); el.board.hidden = false; }
 el.boardClose.addEventListener('click', (e) => { e.stopPropagation(); el.board.hidden = true; });
 el.board.addEventListener('pointerdown', (e) => e.stopPropagation());
-
-function showLobby() {
-  clearStrike();
-  el.sub.classList.remove('rule');
-  if (st.matchId && st.peer) {
-    faceTagFoe.textContent = st.peer;
-    faceTagMe.textContent = st.me ?? 'あなた';
-    render({
-      phase: 'matched', lead: '対 峙', sub: `${st.peer} と向かい合った。`,
-      arena: true, action: { label: '構える', onClick: sendReady },
-    });
-  } else {
-    showSearching('もうひとり来るのを待っています。');
-  }
-}
 
 function sendReady() {
   // 書体の読み込み中にラウンドが始まると、合図の字形が途中で入れ替わりうる。
@@ -425,7 +365,6 @@ function connect() {
   ws.onclose = () => {
     setStatus('切断（再接続しています）', false);
     render({ phase: 'error', lead: '通信が切れました', sub: '再接続しています…' });
-    st.matchId = null; st.peer = null; st.started = false;
     setTimeout(connect, 1000);
   };
   ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } onMessage(m); };
@@ -442,62 +381,10 @@ function onMessage(m) {
       showRules();
       break;
     case 'STATS': applyStats(m); renderMine(); if (!el.board.hidden) renderBoard(); break;
-    case 'QUEUED':
-      showSearching('見つかるまで少し待ちます。');
-      break;
-    case 'QUEUE_REJECTED':
-      render({ phase: 'error', lead: '別のタブで参加しています',
-        sub: '同時に参加できるのは1つまでです。' });
-      break;
-    case 'WAIT_TIMEOUT':
-      render({ phase: 'waiting', lead: '相手が見つかりませんでした', sub: '',
-        action: [
-          { label: 'もう一度さがす', onClick: joinQueue },
-          { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
-        ] });
-      break;
-    case 'READY_TIMEOUT':
-      st.matchId = null; st.peer = null;
-      render({ phase: 'waiting', lead: '相手が構えませんでした', sub: '',
-        action: [
-          { label: 'もう一度さがす', onClick: joinQueue },
-          { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
-        ] });
-      break;
-    case 'FULL': render({ phase: 'error', lead: 'この部屋は満員です', sub: '別の部屋を開いてください。' }); break;
-    case 'MATCHED':
-      // 「タイトルへ」を押した直後に組まれることがある。黙って放っておくと
-      // 相手は構えの期限（30秒）まで誰も来ない画面で待たされるので、抜けたと伝える
-      if (!st.started) { sendToServer({ type: 'LEAVE', matchId: m.matchId }); break; }
-      st.matchId = m.matchId;
-      st.peer = (m.peer ?? [])[0] ?? 'あいて';
-      if (m.you) st.me = m.you;
-      showLobby();
-      break;
-    case 'STATE': if (m.matchId) st.matchId = m.matchId; break;
-    case 'PEER_LEFT':
-      // 自分が抜けたときも自分に届く。タイトルにいるなら何も出さない
-      st.peer = null; st.matchId = null;
-      if (!st.started) break;
-      // 待機列から組んだ部屋は片方が抜けた時点で成立しない。
-      // 「次の相手を待っています」と言ったまま選択肢を出さないと、ここも行き止まりになる
-      render({ phase: 'peerleft', lead: '相手が去った', sub: '',
-        action: [
-          { label: 'もう一度さがす', onClick: joinQueue },
-          { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
-        ] });
-      break;
-    case 'ROOM_CLOSED':
-      // 引き分けのあと誰も構えないまま時間切れになった。ボタンを残すと無反応になるので抜ける。
-      // 構えて待っていた人は「やる気がある側」なので、次の相手を探しに行かせる
-      st.matchId = null; st.peer = null;
-      if (!st.started) break;
-      if (st.phase === 'ready') joinQueue(); else showRules();
-      break;
     case 'ARMED': onArmed(m); break;
     case 'GO': onGo(m); break;
     case 'RESULT': onResult(m); break;
-    case 'SPING': send({ type: 'SPONG', seq: m.seq }); break;
+    case 'SPING': sendToServer({ type: 'SPONG', seq: m.seq }); break;
   }
 }
 
@@ -646,7 +533,7 @@ function enterDojo() {
   dojoFacing();
 }
 
-/** 対峙の画面。対人戦の showLobby にあたる */
+/** 対峙の画面 */
 function dojoFacing() {
   const d = st.dojo;
   const rank = DOJO_RANKS[d.rank];
@@ -658,7 +545,7 @@ function dojoFacing() {
     phase: 'ready', lead: '対 峙', sub: `${d.rank + 1}段　${rank.name}`, arena: true,
     action: [
       { label: '構える', onClick: sendReady },
-      { label: 'タイトルへ', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' },
+      { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
     ],
   });
   faceTagFoe.textContent = rank.name;
@@ -762,7 +649,7 @@ function dojoNote(line) {
 function dojoAfter(mine) {
   const d = st.dojo;
   const last = d.rank >= DOJO_RANKS.length - 1;
-  const back = { label: 'タイトルへ', onClick: () => { leaveDojo(); showRules(); }, variant: 'sub' };
+  const back = { label: 'タイトルへ', onClick: showRules, variant: 'sub' };
 
   if (mine.result === 'win') {
     if (last) {
@@ -854,21 +741,7 @@ function onResult(m) {
 
   setTimeout(() => {
     if (st.phase !== 'result') return;
-    if (st.dojo) {
-      dojoAfter(mine);                 // 勝てば次の段へ。サーバーには何も送らない
-    } else if (mine.result === 'draw') {
-      // 引き分けは決着していない。部屋は残してあるので、同じ相手ともう一本（SET2-3 §5.3）。
-      // ここで「やめる」を出さないのは、決着をつけさせたいから。
-      // 押さずに放っておけば60秒で部屋が閉じ、ROOM_CLOSED で抜けられる
-      setActions([{ label: '構える', onClick: sendReady }]);
-    } else {  // 決着
-      // 決着した試合は部屋を解散してある。「次の相手を探す」か「やめる」かの2択。
-      // 連勝は列に戻っても切れない（SET2-6 §6.2）
-      setActions([
-        { label: '次の相手', onClick: joinQueue },
-        { label: 'タイトルへ', onClick: showRules, variant: 'sub' },
-      ]);
-    }
+    dojoAfter(mine);                   // 勝てば次の段へ
   }, 600);
 }
 

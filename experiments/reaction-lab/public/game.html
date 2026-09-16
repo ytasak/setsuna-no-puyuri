@@ -104,46 +104,6 @@
   }
   @keyframes sway { 0%,100% { transform: skewX(-3deg); } 50% { transform: skewX(3deg); } }
 
-  /* ---------------- 道中（相手を探しているあいだ）----------------
-     相手が見つかるまで、地平線の上をひとりで歩いて進む。
-     背景が右から左へ流れ、🥺 は小刻みに上下する。
-
-     遠いものほどゆっくり流す。山＜手前の山＜草 の順に速くすると奥行きが出る。
-     月と星は動かさない。遠すぎて動いて見えないほうが自然 */
-  @keyframes scrollLeft { to { transform: translateX(-50%); } }
-  #stage.walking #ridgeFar  { animation: scrollLeft 44s linear infinite; }
-  #stage.walking #ridgeNear { animation: scrollLeft 22s linear infinite; }
-
-  /* 草は背景の繰り返し模様なので、位置をずらして流す。
-     ずらす量は模様の周期の整数倍（奥は5px×8、手前は9px×5）。
-     なびく animation とは別のプロパティなので、2本重ねて同時に効かせられる */
-  @keyframes grassRunBack  { to { background-position-x: -40px; } }
-  @keyframes grassRunFront { to { background-position-x: -45px; } }
-  #stage.walking #grassBack  { animation: sway 7s ease-in-out infinite, grassRunBack 2.2s linear infinite; }
-  #stage.walking #grassFront { animation: sway 5.2s ease-in-out infinite -1.6s, grassRunFront 1.1s linear infinite; }
-
-  /* 歩き手。地平線の上に立たせるのは対峙と同じ置き方 */
-  #walker {
-    position: absolute; left: 50%; top: 0; z-index: 2;
-    display: flex; flex-direction: column; align-items: center; gap: .25rem;
-    transform: translate(-50%, -96%);
-  }
-  #walker .face { font-size: clamp(40px, 14vmin, 80px); line-height: 1; }
-  #walker .tag {
-    font-size: clamp(9px, 2.6vmin, 11px); color: #8d7f8f; letter-spacing: .14em;
-    text-shadow: 0 1px 2px #000;
-  }
-  /* 足が無いので、上下の跳ねと左右の傾きで歩きに見せる。
-     1周で2歩ぶん。速すぎると走って見えるので 0.72 秒 */
-  #stage.walking #walker .face { animation: walkBob .72s ease-in-out infinite; }
-  @keyframes walkBob {
-    0%   { transform: translateY(0)    rotate(-4deg); }
-    25%  { transform: translateY(-10%) rotate(0deg); }
-    50%  { transform: translateY(0)    rotate(4deg); }
-    75%  { transform: translateY(-10%) rotate(0deg); }
-    100% { transform: translateY(0)    rotate(-4deg); }
-  }
-
   /* 構えた瞬間に風が止まる。
      動くものを残すと合図の描画が遅れかねないうえ、止まること自体が緊張になる */
   #stage.armed .grass, #stage.cue .grass { animation: none; transform: skewX(0deg); }
@@ -440,11 +400,6 @@
   @keyframes slam { 0% { transform: scale(2.1); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
 
   @media (prefers-reduced-motion: reduce) {
-    /* 道中は流さず、立っているだけにする */
-    #stage.walking #ridgeFar, #stage.walking #ridgeNear,
-    #stage.walking #grassBack, #stage.walking #grassFront,
-    #stage.walking #walker .face { animation: none !important; }
-
     /* #field は空と地面に分ける前の名前で、いまは存在しない。
        揺れが止まらなくなっていたので #sky と #ground に直した */
     #stage.strike #flash, #stage.strike .blade, #stage.strike #sky, #stage.strike #ground,
@@ -480,7 +435,6 @@
       <div id="grassFront" class="grass"></div>
     </div>
     <div id="ground">
-      <div id="walker" hidden><div class="face">🥺</div><div class="tag"></div></div>
       <div id="arena" hidden>
         <div class="fighter" id="me"><div class="knife">🔪</div><div class="face">🥺</div><div class="tag">あなた</div></div>
         <div id="ma"></div>
