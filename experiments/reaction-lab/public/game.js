@@ -15,7 +15,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   stage: $('stage'), arena: $('arena'), me: $('me'), foe: $('foe'),
   cue: $('cue'), lead: $('lead'), times: $('times'), sub: $('sub'),
-  actions: $('actions'), status: $('status'), mute: $('mute'),
+  actions: $('actions'), mute: $('mute'),
   mine: $('mine'), board: $('board'), rankFast: $('rankFast'), rankStreak: $('rankStreak'),
   resetIn: $('resetIn'), boardClose: $('boardClose'),
 };
@@ -215,16 +215,18 @@ function inputTime(e, fallback) {
 
 // ---------------------------------------------------------------- 状態
 
+/** 結果の中で自分を指す id。相手は 'dojo-foe' */
+const ME = 'me';
+
 const st = {
-  phase: 'connecting',
-  matchId: null, roundId: null, clientId: null, peer: null,
+  phase: 'rules',
+  matchId: null, roundId: null, peer: null,
   me: null,              // その日限りの二つ名
-  daily: null, ranking: null, cookieReceived: true, resetAt: null,
+  daily: null, ranking: null, cookieReceived: true, online: true, resetAt: null,
   tRecv: null, tPaint: null, tDisplay: null, frameInterval: null,
   extraTaps: 0, visibilityOk: true, lockUntil: 0,
   dojo: null,            // 道場にいるあいだだけ入る（下の「道場」節）
 };
-let ws = null, eventSeq = 0;
 
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && ['armed', 'cue'].includes(st.phase)) st.visibilityOk = false;
@@ -268,8 +270,6 @@ function render({ phase, lead, sub = '', action = null, times = null, leadClass 
   renderMine();
 }
 
-const setStatus = (text, ok) => { el.status.innerHTML = `<span class="dot${ok ? ' on' : ''}"></span> ${text}`; };
-
 function showRules() {
   // ここはタイトル。道場から出た状態へ戻す
   leaveDojo();
@@ -300,6 +300,7 @@ function renderMine() {
   }
   // Cookie が保存されない環境では記録が積み上がらない（SET2-6 §3.3）
   if (!st.cookieReceived) bits.push('<span class="warn">この環境では記録が残りません</span>');
+  else if (!st.online) bits.push('<span class="warn">記録につながりませんでした</span>');
   bits.push('<span><a href="#" id="openBoard" style="color:inherit">きょうの記録</a></span>');
   el.mine.innerHTML = bits.join('');
   const open = document.getElementById('openBoard');
@@ -323,7 +324,7 @@ function renderBoard() {
   el.resetIn.textContent = `記録は毎日 0 時にリセットされます（あと ${h}時間${mi}分）`;
 }
 
-function showBoard() { sendToServer({ type: 'STATS_REQ' }); renderBoard(); el.board.hidden = false; }
+function showBoard() { refreshMe(); renderBoard(); el.board.hidden = false; }
 el.boardClose.addEventListener('click', (e) => { e.stopPropagation(); el.board.hidden = true; });
 el.board.addEventListener('pointerdown', (e) => e.stopPropagation());
 
@@ -335,56 +336,62 @@ function sendReady() {
     document.fonts.ready.then(sendReady);
     return;
   }
-  send({ type: 'READY', matchId: st.matchId });
+  dojoSend({ type: 'READY' });
   clearStrike();
   render({ phase: 'ready', lead: '構えた', sub: '相手が構えるのを待っています。', arena: true });
 }
 
 // ---------------------------------------------------------------- 通信
+//
+// 試合はブラウザの中だけで進むので、繋ぎっぱなしにする必要が無い。
+// サーバーに用があるのは当日の記録だけで、口は2つしかない。
+//
+//   GET  /api/me     … 二つ名・自分の記録・最速ランキング
+//   POST /api/result … 1ラウンドぶんの結果を記録する
+//
+// **どちらも失敗して構わない。** 記録が残らないだけで、遊ぶほうは止まらない。
+// サーバーが落ちていても道場は最後まで動く。
 
-function send(msg) {
-  // 道場はサーバーに繋がない。同じ形のメッセージを自分で受けて自分で返す。
-  // ここで振り替えることで、handleInput から下（計測・演出・音）は
-  // 対人戦とまったく同じ経路を通る
-  if (st.dojo) { dojoSend(msg); return; }
-  sendToServer(msg);
+async function api(path, body) {
+  const res = await fetch(path, body === undefined ? { cache: 'no-store' } : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(String(res.status));
+  return res.json();
 }
 
-/** 道場にいても必ずサーバーへ送る。列や部屋から抜けるときに使う */
-function sendToServer(msg) {
-  if (!ws || ws.readyState !== 1) return;
-  ws.send(JSON.stringify({ eventId: ++eventSeq, ...msg }));
+function applyMe(m) {
+  if (m.you) st.me = m.you;
+  st.cookieReceived = m.cookieReceived !== false;
+  st.resetAt = Date.now() + (m.msUntilReset ?? 0);
+  applyStats(m);
 }
 
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  // 待機列に入る。部屋名は使わない（docs/set2-3-matchmaking.md）
-  const q = new URLSearchParams({ mode: 'queue' });
-  ws = new WebSocket(`${proto}://${location.host}/?${q}`);
-  ws.onopen = () => setStatus('接続済み', true);
-  ws.onclose = () => {
-    setStatus('切断（再接続しています）', false);
-    render({ phase: 'error', lead: '通信が切れました', sub: '再接続しています…' });
-    setTimeout(connect, 1000);
-  };
-  ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } onMessage(m); };
+/** 自分まわりを取り直す。開いたときと、記録を見るときに呼ぶ */
+async function refreshMe() {
+  try { applyMe(await api('/api/me')); st.online = true; } catch { st.online = false; }
+  renderMine();
+  if (!el.board.hidden) renderBoard();
 }
 
+/** 1ラウンドぶん記録する。返ってくるのは /api/me と同じ形 */
+async function report(round) {
+  try { applyMe(await api('/api/result', round)); st.online = true; } catch { st.online = false; }
+  renderMine();
+}
+
+/** 二重記録を防ぐためだけの使い捨ての id。連番にしない（開き直すと以前と衝突する） */
+function newRoundId() {
+  return crypto.randomUUID?.()
+    ?? (Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+}
+
+/** 道場が自分で作ったイベントを受ける口。ARMED / GO / RESULT の3つだけ */
 function onMessage(m) {
   switch (m.type) {
-    case 'WELCOME':
-      st.clientId = m.clientId;
-      st.me = m.you;
-      st.cookieReceived = m.cookieReceived;
-      st.resetAt = Date.now() + (m.msUntilReset ?? 0);
-      applyStats(m);
-      showRules();
-      break;
-    case 'STATS': applyStats(m); renderMine(); if (!el.board.hidden) renderBoard(); break;
     case 'ARMED': onArmed(m); break;
     case 'GO': onGo(m); break;
     case 'RESULT': onResult(m); break;
-    case 'SPING': sendToServer({ type: 'SPONG', seq: m.seq }); break;
   }
 }
 
@@ -431,7 +438,7 @@ function handleInput(tInput, tHandler) {
   if (performance.now() < st.lockUntil) return;
 
   if (st.phase === 'armed' || st.phase === 'cuePending') {
-    send({ type: 'TAP', matchId: st.matchId, roundId: st.roundId, flying: true, rtt: {} });
+    dojoSend({ type: 'TAP', roundId: st.roundId, flying: true });
     render({ phase: 'sent', lead: '抜いた', sub: '早い。相手を待っています。', arena: true });
     return;
   }
@@ -439,16 +446,11 @@ function handleInput(tInput, tHandler) {
 
   const R = tInput - st.tDisplay;
   if (R < 0) {
-    send({ type: 'TAP', matchId: st.matchId, roundId: st.roundId, flying: true, rtt: {} });
+    dojoSend({ type: 'TAP', roundId: st.roundId, flying: true });
     render({ phase: 'sent', lead: '抜いた', sub: '早い。相手を待っています。', arena: true });
     return;
   }
-  send({
-    type: 'TAP', matchId: st.matchId, roundId: st.roundId, flying: false, R,
-    recvToPaint: st.tPaint - st.tRecv, inputToHandler: tHandler - tInput,
-    frameInterval: st.frameInterval, visibilityOk: st.visibilityOk,
-    extraTaps: st.extraTaps, rtt: {},
-  });
+  dojoSend({ type: 'TAP', roundId: st.roundId, flying: false, R });
   st.phase = 'sent';
   el.lead.textContent = `${R.toFixed(0)} ms`;
   el.sub.textContent = '相手を待っています。';
@@ -528,7 +530,7 @@ function enterDojo() {
     // 段位は持ち越さない。入るたびに一段目から。
     // 保存すると次に来たときには最後の相手しか残っておらず、登る楽しみが消える
     rank: 0, cfg: { ...rules.DEFAULT_CFG },
-    seq: 0, roundId: 0, timers: [], rec: null, botR: null, goAt: 0,
+    roundId: 0, timers: [], rec: null, botR: null, goAt: 0,
   };
   dojoFacing();
 }
@@ -613,7 +615,6 @@ function dojoResolve() {
   for (const t of d.timers) clearTimeout(t);
   d.timers = [];
 
-  const meId = st.clientId ?? 'me';
   const side = (id, r) => ({
     id,
     flying: !!r.flying,
@@ -623,7 +624,7 @@ function dojoResolve() {
     disconnectedBeforeGo: false, disconnectedAfterGo: false,
     R: r.R,
   });
-  const a = side(meId, rec.me);
+  const a = side(ME, rec.me);
   const b = side('dojo-foe', rec.bot);
   const verdict = decide(a, b, d.cfg);
 
@@ -632,12 +633,19 @@ function dojoResolve() {
     R: p.R === null ? null : Math.round(p.R * 100) / 100,
     flying: p.flying, tooFast: p.tooFast, noInput: p.noInput, disconnected: false,
   });
+  const mine = player(a, st.me ?? 'あなた');
   onMessage({
     type: 'RESULT', matchId: 'dojo', roundId: d.roundId,
-    resultId: `dojo:${++d.seq}`, reason: verdict.reason,
-    recorded: false,                       // 稽古は記録しない
-    players: [player(a, st.me ?? 'あなた'), player(b, DOJO_RANKS[d.rank].name)],
+    reason: verdict.reason,
+    players: [mine, player(b, DOJO_RANKS[d.rank].name)],
   });
+  // 勝ち負けが付いたものだけ記録する。引き分け（同着）は当日の記録の対象にならない
+  if (mine.result === 'win' || mine.result === 'lose') {
+    report({
+      id: newRoundId(), result: mine.result, R: mine.R,
+      flying: mine.flying || mine.tooFast, noInput: mine.noInput,
+    });
+  }
 }
 
 /** 決着の理由や「記録されません」を消さずに、一行足す */
@@ -690,7 +698,7 @@ function reasonText(mine, other) {
 }
 
 function onResult(m) {
-  const mine = m.players.find((p) => p.id === st.clientId) ?? m.players[0];
+  const mine = m.players.find((p) => p.id === ME) ?? m.players[0];
   const other = m.players.find((p) => p.id !== mine.id);
   const v = VERDICT[mine.result] ?? VERDICT.draw;
 
@@ -745,5 +753,5 @@ function onResult(m) {
   }, 600);
 }
 
-setStatus('接続しています', false);
-connect();
+showRules();
+refreshMe();

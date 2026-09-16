@@ -205,10 +205,6 @@
   /* 主でないほうは控えめに。押し間違いを減らす */
   #actions button.sub { border-color: #4a4458; color: #9a90a8; background: transparent; }
 
-  .note { font-size: clamp(10px, 2.6vmin, 12px); color: #6a6a7c; }
-  .dot { display: inline-block; width: .5em; height: .5em; border-radius: 50%; background: var(--lose); vertical-align: middle; }
-  .dot.on { background: var(--win); }
-  #stage.armed #status, #stage.cue #status { visibility: hidden; }
 
   /* 当日の戦績。地面側に小さく出す */
   #mine {
@@ -441,12 +437,11 @@
         <div class="fighter" id="foe"><div class="knife">🔪</div><div class="face">🥺</div><div class="tag">あいて</div></div>
       </div>
       <div id="hud">
-        <div id="lead">接続しています</div>
+        <div id="lead"></div>
         <div id="times" class="times" hidden></div>
         <div id="sub"></div>
         <div id="actions" hidden></div>
         <div id="mine"></div>
-        <div id="status" class="note"></div>
       </div>
     </div>
     <div id="cue" hidden>ぷゆ！</div>

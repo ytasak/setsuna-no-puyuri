@@ -102,6 +102,45 @@ function csvCell(v) {
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+/**
+ * POST の本文を JSON として読む。壊れていれば null を返す。
+ *
+ * 公開エンドポイントなので上限を置く。道場の結果は 200 バイトにも満たないので
+ * 8KB あれば充分すぎる。超えたら読むのをやめて接続を捨てる。
+ */
+function readJson(req, cb, limit = 8 * 1024) {
+  const chunks = [];
+  let size = 0, done = false;
+  const finish = (v) => { if (!done) { done = true; cb(v); } };
+  req.on('data', (c) => {
+    size += c.length;
+    if (size > limit) { finish(null); req.destroy(); return; }
+    chunks.push(c);
+  });
+  req.on('end', () => {
+    try { finish(JSON.parse(Buffer.concat(chunks).toString())); } catch { finish(null); }
+  });
+  req.on('error', () => finish(null));
+}
+
+/**
+ * 道場から届いた1ラウンドを、記録できる形に整えて返す。受け付けられなければ null。
+ *
+ * **これは不正対策ではない。** 値はクライアントの申告そのままで、確かめる術はない
+ * （docs/set2-4-sync-fairness.md §5.3）。壊れた値で集計を壊さないための型の検査だけをする。
+ */
+function normalizeRound(body) {
+  if (!body || typeof body !== 'object') return null;
+  // 二重記録を防ぐためだけの使い捨ての id。連番にすると、
+  // ページを開き直したときに以前のラウンドと同じ id になって捨てられる
+  const id = body.id;
+  if (typeof id !== 'string' || !/^[0-9A-Za-z_-]{8,64}$/.test(id)) return null;
+  if (body.result !== 'win' && body.result !== 'lose') return null;
+  const R = typeof body.R === 'number' && Number.isFinite(body.R) && body.R >= 0 && body.R < 60000
+    ? body.R : null;
+  return { id, result: body.result, R, flying: !!body.flying, noInput: !!body.noInput };
+}
+
 function makeCsv(file, cols, enabled = true) {
   if (!enabled) return () => {};
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -209,6 +248,35 @@ export function startServer(options = {}) {
         uptimeSec: Math.round((Date.now() - startedAt) / 1000),
         recent: store.recent(8),
       }));
+      return;
+    }
+
+    // 当日の自分の記録と最速ランキング。ページを開いたときと、記録した直後に取る
+    if (url.pathname === '/api/me') {
+      res.writeHead(200, { ...headers, 'content-type': MIME['.json'] });
+      res.end(JSON.stringify(mePayload(token, readToken(req) !== null)));
+      return;
+    }
+
+    // 道場の結果を当日の記録に取り込む。返すのは /api/me と同じ形
+    if (url.pathname === '/api/result') {
+      if (req.method !== 'POST') { res.writeHead(405, headers); res.end(); return; }
+      readJson(req, (body) => {
+        const round = normalizeRound(body);
+        if (!round) { res.writeHead(400, { ...headers, 'content-type': MIME['.json'] }); res.end('{"ok":false}'); return; }
+        stats.record({
+          // token で名前空間を分ける。分けないと、別の人の1ラウンド目と
+          // 同じ resultId になって二重記録の防止に引っかかり、片方が捨てられる
+          resultId: `${token}:${round.id}`,
+          recorded: true,
+          players: [{
+            id: 'me', result: round.result, R: round.R,
+            flying: round.flying, tooFast: false, noInput: round.noInput, disconnected: false,
+          }],
+        }, () => token);
+        res.writeHead(200, { ...headers, 'content-type': MIME['.json'] });
+        res.end(JSON.stringify(mePayload(token, readToken(req) !== null)));
+      });
       return;
     }
 
@@ -342,6 +410,15 @@ export function startServer(options = {}) {
       send(c, { type: 'STATS', daily: publicDaily(stats.daily(c.token)), ranking: rank });
     }
   }
+
+  /** ページが必要とする「自分まわり」を一式返す。token は出さない */
+  const mePayload = (token, cookieReceived) => ({
+    you: nickname(token, gameDate()),       // その日限りの二つ名
+    cookieReceived,                         // false が続くなら記録が残らない
+    daily: publicDaily(stats.daily(token)),
+    ranking: stats.ranking(),
+    msUntilReset: msUntilReset(),
+  });
 
   /** 本人向けでも token は返さない */
   const publicDaily = (d) => ({
