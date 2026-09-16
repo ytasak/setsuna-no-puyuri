@@ -7,7 +7,7 @@
 # アプリは node に降りてから起動する。アプリ本体が root で動くことはない。
 #
 # chown に失敗しても止めない。書けなければ戦績の保存が
-# 「保存しない版」に落ちるだけで、対戦は続く（adapters/stats-store.js）。
+# 「保存しない版」に落ちるだけで、遊ぶほうは止まらない（adapters/stats-store.js）。
 set -e
 
 DATA_DIR="${DATA_DIR:-/app/data}"

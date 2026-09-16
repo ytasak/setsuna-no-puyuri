@@ -1,4 +1,4 @@
-// 日次戦績・ランキング・待機列のテスト。
+// 日次戦績・ランキングのテスト。
 // 時計は固定して渡すので、日付をまたぐ挙動も実時間を待たずに検証できる。
 
 import test from 'node:test';
@@ -6,7 +6,6 @@ import assert from 'node:assert/strict';
 import { gameDate, nextReset, msUntilReset } from './clock.js';
 import { nickname, nicknameSpace, nicknameLists } from './nickname.js';
 import { createStats } from './stats.js';
-import { pickPair, isEngaged } from './lobby.js';
 
 // ---------------------------------------------------------------- ゲーム日
 
@@ -66,14 +65,11 @@ const AT = new Date('2026-09-13T03:00:00Z'); // JST 12:00
 const tokenOf = (id) => ({ a: 'tokA', b: 'tokB' }[id]);
 
 function round(n, aRes, bRes, opts = {}) {
-  const roundId = opts.roundId ?? 1;
   return {
-    resultId: `m${n}:${roundId}`, roundId, recorded: opts.recorded !== false,
+    resultId: `m${n}`,
     players: [
-      { id: 'a', result: aRes, R: opts.aR ?? 200, Rsource: opts.aSrc ?? 'claimed',
-        flying: false, tooFast: false, noInput: false, disconnected: false },
-      { id: 'b', result: bRes, R: opts.bR ?? 250, Rsource: 'claimed',
-        flying: false, tooFast: false, noInput: false, disconnected: false },
+      { id: 'a', result: aRes, R: opts.aR ?? 200, flying: !!opts.aFlying, noInput: !!opts.aNoInput },
+      { id: 'b', result: bRes, R: opts.bR ?? 250, flying: false, noInput: false },
     ],
   };
 }
@@ -85,49 +81,6 @@ test('勝敗が集計され、最速記録が更新される', () => {
   const d = s.daily('tokA', AT);
   assert.equal(d.win, 2); assert.equal(d.games, 2);
   assert.equal(d.bestR, 180);
-  assert.equal(d.streak, 2); assert.equal(d.bestStreak, 2);
-});
-
-test('当日の集計が試合数・決着・引き分けに分かれる', () => {
-  const s = createStats();
-  s.record(round(1, 'win', 'lose'), tokenOf, AT);
-  s.record(round(2, 'draw', 'draw'), tokenOf, AT);
-  s.record(round(3, 'win', 'lose'), tokenOf, AT);
-  s.record(round(4, 'lose', 'win', { recorded: false }), tokenOf, AT); // 無効試合
-
-  const sm = s.summary(AT);
-  assert.equal(sm.players, 2);
-  assert.equal(sm.matches, 4);
-  assert.equal(sm.decided, 2, '決着した試合は勝ちの総和と一致する');
-  assert.equal(sm.draws, 1);
-  assert.equal(sm.voided, 1);
-  assert.equal(sm.decided + sm.draws + sm.voided, sm.matches, '内訳が試合数に足し合う');
-  assert.equal(sm.drawRate, 0.25);
-});
-
-test('何ラウンド目で決着したかを数える', () => {
-  const s = createStats();
-  // 1本で決着
-  s.record(round(1, 'win', 'lose'), tokenOf, AT);
-  // 2本目で決着（1回引き分けてから）
-  s.record(round(2, 'draw', 'draw', { roundId: 1 }), tokenOf, AT);
-  s.record(round(2, 'win', 'lose', { roundId: 2 }), tokenOf, AT);
-  // 4本目まで引き分けが続いた（クレームで報告されたかたち）
-  s.record(round(3, 'draw', 'draw', { roundId: 1 }), tokenOf, AT);
-  s.record(round(3, 'draw', 'draw', { roundId: 2 }), tokenOf, AT);
-  s.record(round(3, 'draw', 'draw', { roundId: 3 }), tokenOf, AT);
-  s.record(round(3, 'draw', 'draw', { roundId: 4 }), tokenOf, AT);
-
-  const { rounds } = s.summary(AT);
-  assert.deepEqual(rounds.decided, { 1: 1, 2: 1 });
-  // 引き分けは m2 の1本目と、m3 の1〜4本目
-  assert.deepEqual(rounds.draw, { 1: 2, 2: 1, 3: 1, 4: 1 }, '4連続の引き分けが見えない');
-});
-
-test('集計に token が混ざらない', () => {
-  const s = createStats();
-  s.record(round(1, 'win', 'lose'), tokenOf, AT);
-  assert.ok(!JSON.stringify(s.summary(AT)).includes('tokA'));
 });
 
 test('onChange は変化した人ぶんだけ呼ばれる', () => {
@@ -157,7 +110,6 @@ test('保存してあった行から戦績とランキングが戻る', () => {
   assert.deepEqual(dst.daily('tokA', AT), src.daily('tokA', AT));
   assert.deepEqual(dst.ranking(AT), src.ranking(AT));
   assert.equal(dst.daily('tokA', AT).bestR, 180);
-  assert.equal(dst.daily('tokA', AT).bestStreak, 2);
 });
 
 test('復元しても続きから集計できる', () => {
@@ -171,13 +123,12 @@ test('復元しても続きから集計できる', () => {
   const d = dst.daily('tokA', AT);
   assert.equal(d.games, 2);
   assert.equal(d.win, 2);
-  assert.equal(d.streak, 2, '連勝が復元した値から続く');
   assert.equal(d.bestR, 180, '復元した最速記録が遅い値で上書きされない');
 });
 
 test('別の日の行を復元しても当日には出てこない', () => {
   const s = createStats();
-  s.restore([{ token: 'tokA', date: '2026-09-12', name: '前日のぷゆ', games: 9, win: 9, bestR: 120, bestStreak: 9 }]);
+  s.restore([{ token: 'tokA', date: '2026-09-12', name: '前日のぷゆ', games: 9, win: 9, bestR: 120 }]);
   assert.equal(s.daily('tokA', AT).games, 0, '当日の戦績は 0 から');
   assert.equal(s.ranking(AT).players, 0, '当日ランキングにも出ない');
 });
@@ -190,51 +141,24 @@ test('同じ resultId の再送で戦績が増えない', () => {
   assert.equal(s.daily('tokA', AT).games, 1);
 });
 
-test('記録されない試合は集計されず、連勝も切れない', () => {
-  const s = createStats();
-  s.record(round(1, 'win', 'lose'), tokenOf, AT);
-  s.record(round(2, 'lose', 'win', { recorded: false }), tokenOf, AT); // 無効試合
-  const d = s.daily('tokA', AT);
-  assert.equal(d.win, 1);
-  assert.equal(d.lose, 0, '無効試合は負けに数えない');
-  assert.equal(d.voided, 1);
-  assert.equal(d.streak, 1, '無効試合で連勝は切れない');
-});
-
-test('引き分けでは連勝が切れず、増えもしない', () => {
-  const s = createStats();
-  s.record(round(1, 'win', 'lose'), tokenOf, AT);
-  s.record(round(2, 'draw', 'draw'), tokenOf, AT);
-  s.record(round(3, 'win', 'lose'), tokenOf, AT);
-  const d = s.daily('tokA', AT);
-  assert.equal(d.streak, 2);
-  assert.equal(d.draw, 1);
-});
-
-test('負けで連勝が切れ、最長連勝は残る', () => {
-  const s = createStats();
-  for (const n of [1, 2, 3]) s.record(round(n, 'win', 'lose'), tokenOf, AT);
-  s.record(round(4, 'lose', 'win'), tokenOf, AT);
-  const d = s.daily('tokA', AT);
-  assert.equal(d.streak, 0);
-  assert.equal(d.bestStreak, 3);
-});
-
 test('負けた試合でも最速記録は更新される', () => {
   const s = createStats();
   s.record(round(1, 'lose', 'win', { aR: 150, bR: 140 }), tokenOf, AT);
   assert.equal(s.daily('tokA', AT).bestR, 150, '負けても速ければ記録になる');
 });
 
-test('記録されないラウンドは最速記録に入らない', () => {
+test('合図の前に抜いたラウンドと、抜かなかったラウンドは最速記録に入らない', () => {
   const s = createStats();
-  s.record(round(1, 'win', 'lose', { aR: 90, recorded: false }), tokenOf, AT);
-  assert.equal(s.daily('tokA', AT).bestR, null);
+  s.record(round(1, 'lose', 'win', { aR: null, aFlying: true }), tokenOf, AT);
+  s.record(round(2, 'lose', 'win', { aR: null, aNoInput: true }), tokenOf, AT);
+  const d = s.daily('tokA', AT);
+  assert.equal(d.lose, 2, '負けには数える');
+  assert.equal(d.bestR, null);
 });
 
 // ---------------------------------------------------------------- ランキング
 
-test('ランキングは最速昇順・連勝降順で、token を出さない', () => {
+test('ランキングは最速昇順で、token を出さない', () => {
   const s = createStats();
   const many = (id) => (x) => ({ a: id, b: 'other' }[x]);
   s.record(round(1, 'win', 'lose', { aR: 220 }), many('t1'), AT);
@@ -243,7 +167,7 @@ test('ランキングは最速昇順・連勝降順で、token を出さない',
   const r = s.ranking(AT);
   assert.deepEqual(r.fastest.map((x) => x.value), [170, 195, 220, 250]);
   assert.ok(r.fastest.every((x) => !JSON.stringify(x).includes('t1')));
-  assert.ok(r.streak.every((x) => typeof x.value === 'number'));
+  assert.equal(Object.keys(r).sort().join(','), 'date,fastest,players', '連勝は出さない');
   assert.equal(r.date, '2026-09-13');
 });
 
@@ -273,27 +197,4 @@ test('prune は容量回収だけで、当日の記録は残す', () => {
   s.record(round(2, 'win', 'lose'), tokenOf, new Date('2026-09-14T03:00:00Z'));
   s.prune(new Date('2026-09-14T03:00:00Z'));
   assert.deepEqual(s.dates, ['2026-09-14']);
-});
-
-// ---------------------------------------------------------------- 待機列
-
-test('token が異なる2人を組む', () => {
-  assert.deepEqual(pickPair([{ token: 'x' }, { token: 'y' }]), [0, 1]);
-});
-
-test('同じ token 同士は組まない（複数タブでの自己対戦を防ぐ）', () => {
-  assert.equal(pickPair([{ token: 'x' }, { token: 'x' }]), null);
-  assert.deepEqual(pickPair([{ token: 'x' }, { token: 'x' }, { token: 'y' }]), [0, 2],
-    '同一 token は飛ばして次の相手と組む');
-});
-
-test('1人だけなら組まない', () => {
-  assert.equal(pickPair([{ token: 'x' }]), null);
-  assert.equal(pickPair([]), null);
-});
-
-test('既に所属している token は二重に入れない', () => {
-  assert.equal(isEngaged('x', { queue: [{ token: 'x' }] }), true);
-  assert.equal(isEngaged('x', { engagedTokens: new Set(['x']) }), true);
-  assert.equal(isEngaged('x', { queue: [{ token: 'y' }] }), false);
 });

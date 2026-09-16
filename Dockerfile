@@ -1,13 +1,11 @@
-# 1コンテナ構成。Node のプロセスが静的ファイルと WebSocket の両方を配信するため、
-# ゲーム本体と対戦サーバーは常に同一 Origin になる。
+# 1コンテナ構成。Node のプロセスが静的ファイルと記録の API の両方を配信するため、
+# ゲーム本体と API は常に同一 Origin になる。
 #
 # kusa へは iframe で埋め込まれるので、埋め込みを拒否するヘッダを出さないこと。
 # X-Frame-Options も CSP frame-ancestors も設定していない（出すと真っ白になる）。
-
-FROM node:24-alpine AS deps
-WORKDIR /app
-COPY experiments/reaction-lab/package.json experiments/reaction-lab/package-lock.json ./
-RUN npm ci --omit=dev
+#
+# **依存パッケージが無いので、インストールの段も node_modules も無い。**
+# SQLite は標準の node:sqlite を使っている。
 
 FROM node:24-alpine
 # su-exec は起動時に root から node へ降りるために使う（docker-entrypoint.sh）
@@ -16,7 +14,6 @@ WORKDIR /app
 # DATA_DIR に戦績の SQLite を置く。Railway ではここに Volume をマウントする
 ENV NODE_ENV=production TZ=Asia/Tokyo DATA_DIR=/app/data
 
-COPY --from=deps /app/node_modules ./node_modules
 COPY experiments/reaction-lab/package.json ./
 COPY experiments/reaction-lab/server.js ./
 COPY experiments/reaction-lab/core ./core

@@ -9,19 +9,9 @@
 import { gameDate } from './clock.js';
 import { nickname } from './nickname.js';
 
-/** 連勝の増減。引き分けと無効試合では切らさない（§6.2） */
-function nextStreak(streak, outcome, recorded) {
-  if (!recorded) return streak;             // 記録されない試合はノーカウント
-  if (outcome === 'win') return streak + 1;
-  if (outcome === 'lose') return 0;
-  return streak;                            // draw / void は維持
-}
-
 /** 最速記録の対象になるか。負けた試合も対象にする（§6.1） */
-function countsForBest(p, recorded) {
-  return recorded
-    && p.R != null
-    && !p.flying && !p.tooFast && !p.noInput && !p.disconnected;
+function countsForBest(p) {
+  return p.R != null && !p.flying && !p.noInput;
 }
 
 /**
@@ -35,24 +25,14 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
 
   const day = (date) => {
     let d = days.get(date);
-    if (!d) {
-      d = {
-        players: new Map(),
-        seen: new Set(),
-        // 何ラウンド目の結果だったかの分布。引き分けが何回続いているかを見る。
-        // 引き分けのラウンド2は「2回続いた」、ラウンド4は「4回続いた」を意味する
-        rounds: { decided: new Map(), draw: new Map() },
-      };
-      days.set(date, d);
-    }
+    if (!d) { d = { players: new Map(), seen: new Set() }; days.set(date, d); }
     return d;
   };
 
   const blank = (token, date) => ({
     token, date, name: nickname(token, date),
-    games: 0, win: 0, lose: 0, draw: 0, voided: 0,
+    games: 0, win: 0, lose: 0,
     bestR: null, bestRAt: null,
-    streak: 0, bestStreak: 0, bestStreakAt: null,
   });
 
   return {
@@ -63,14 +43,6 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
       if (d.seen.has(result.resultId)) return { recorded: false, duplicate: true };
       d.seen.add(result.resultId);
 
-      // 決着までに何ラウンドかかったか。再戦方式が連鎖を短くできているかの判断材料
-      if (result.recorded) {
-        const isDraw = result.players.length > 1 && result.players.every((p) => p.result === 'draw');
-        const bucket = isDraw ? d.rounds.draw : d.rounds.decided;
-        const r = result.roundId ?? 1;
-        bucket.set(r, (bucket.get(r) ?? 0) + 1);
-      }
-
       for (const p of result.players) {
         const token = tokenOf(p.id);
         if (!token) continue;
@@ -78,18 +50,9 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
         if (!s) { s = blank(token, date); d.players.set(token, s); }
 
         s.games += 1;
-        if (result.recorded) {
-          if (p.result === 'win') s.win += 1;
-          else if (p.result === 'lose') s.lose += 1;
-          else if (p.result === 'draw') s.draw += 1;
-        } else {
-          s.voided += 1;
-        }
+        if (p.result === 'win') s.win += 1; else s.lose += 1;
 
-        s.streak = nextStreak(s.streak, p.result, result.recorded);
-        if (s.streak > s.bestStreak) { s.bestStreak = s.streak; s.bestStreakAt = at.toISOString(); }
-
-        if (countsForBest(p, result.recorded) && (s.bestR === null || p.R < s.bestR)) {
+        if (countsForBest(p) && (s.bestR === null || p.R < s.bestR)) {
           s.bestR = p.R; s.bestRAt = at.toISOString();
         }
 
@@ -126,57 +89,17 @@ export function createStats({ now = () => new Date(), onChange = null } = {}) {
     },
 
     /**
-     * 当日ランキング2種。同点は先に記録した方が上（§6.3）。
-     * token は絶対に外へ出さない（§6.4）
+     * 当日ランキング。その日の最速反応時間だけを並べる。
+     * 同点は先に記録した方が上（§6.3）。token は絶対に外へ出さない（§6.4）
      */
     ranking(at = now(), limit = 10) {
       const date = gameDate(at);
       const all = [...day(date).players.values()];
-      const pub = (s, value) => ({ name: s.name, value });
-
       const fastest = all.filter((s) => s.bestR !== null)
         .sort((a, b) => (a.bestR - b.bestR) || (a.bestRAt < b.bestRAt ? -1 : 1))
-        .slice(0, limit).map((s) => pub(s, Math.round(s.bestR)));
+        .slice(0, limit).map((s) => ({ name: s.name, value: Math.round(s.bestR) }));
 
-      const streak = all.filter((s) => s.bestStreak > 0)
-        .sort((a, b) => (b.bestStreak - a.bestStreak) || (a.bestStreakAt < b.bestStreakAt ? -1 : 1))
-        .slice(0, limit).map((s) => pub(s, s.bestStreak));
-
-      return { date, fastest, streak, players: all.length };
-    },
-
-    /**
-     * 当日の全体集計。個人は出さず、傾向だけ見る。
-     *
-     * 1試合につき2人ぶん記録されるので、試合数の系統は2で割る。
-     * 決着した試合は「勝ち」がちょうど1つなので、勝ちの総和がそのまま決着数になる。
-     *
-     * 同着幅 D をこのままにしてよいか（引き分けが多すぎないか）を
-     * 実データで判断するために足した。合計しか出さないので token は漏れない。
-     */
-    summary(at = now()) {
-      const date = gameDate(at);
-      const all = [...day(date).players.values()];
-      const sum = (k) => all.reduce((t, s) => t + (s[k] ?? 0), 0);
-
-      const matches = sum('games') / 2;
-      const draws = sum('draw') / 2;
-      const voided = sum('voided') / 2;
-      const decided = sum('win');
-
-      return {
-        date, players: all.length,
-        matches, decided, draws, voided,
-        drawRate: matches ? Number((draws / matches).toFixed(4)) : 0,
-        // 何ラウンド目で決着したか / 何ラウンド目の引き分けか。
-        // draw の 4 が多ければ「4連続で引き分けた」が起きている
-        rounds: {
-          decided: Object.fromEntries([...day(date).rounds.decided].sort((a, b) => a[0] - b[0])),
-          draw: Object.fromEntries([...day(date).rounds.draw].sort((a, b) => a[0] - b[0])),
-        },
-        // 内訳が足し合わないときは片側しか記録されていない試合がある
-        raw: { games: sum('games'), win: sum('win'), lose: sum('lose'), draw: sum('draw'), voided: sum('voided') },
-      };
+      return { date, fastest, players: all.length };
     },
 
     /** 容量回収だけが目的。動かなくても正しさには影響しない */

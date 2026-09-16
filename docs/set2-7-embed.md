@@ -2,6 +2,11 @@
 
 > ステータス: **要件は確定。残りは HTTPS での公開のみ**
 > 対応チケット: [SET2-7](https://linear.app/setsuna-no-puyuri/issue/SET2-7)
+> ---
+> **⚠ 一部は歴史的記録。2026-09-16 にマルチプレイを廃止した。**
+> kusa 側の要件（§1）と、iframe・Cookie・HTTPS の手当ては今も生きている。
+> 無くなったのは WebSocket まわり —— WSS の疎通と `ALLOWED_ORIGINS` による Origin 制限。
+> ページとサーバーのやり取りは同一 Origin の HTTP だけになった。
 
 ## 1. 確認できた要件（一次情報）
 
