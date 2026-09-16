@@ -16,7 +16,7 @@ const el = {
   stage: $('stage'), arena: $('arena'), me: $('me'), foe: $('foe'),
   cue: $('cue'), lead: $('lead'), times: $('times'), sub: $('sub'),
   actions: $('actions'), mute: $('mute'),
-  mine: $('mine'), board: $('board'), rankFast: $('rankFast'), rankStreak: $('rankStreak'),
+  mine: $('mine'), board: $('board'), rankFast: $('rankFast'),
   resetIn: $('resetIn'), boardClose: $('boardClose'),
 };
 const faceTagMe = el.me.querySelector('.tag');
@@ -289,7 +289,6 @@ function renderMine() {
   const bits = [];
   if (st.me) bits.push(`<span>${st.me}</span>`);
   if (d) {
-    bits.push(`<span>連勝 <b>${d.streak}</b></span>`);
     bits.push(`<span>最速 <b>${d.bestR === null ? '—' : d.bestR + 'ms'}</b></span>`);
     bits.push(`<span>${d.win}勝 ${d.lose}敗</span>`);
   }
@@ -303,17 +302,13 @@ function renderMine() {
 }
 
 function renderBoard() {
-  const r = st.ranking;
+  const list = st.ranking?.fastest ?? [];
   const row = (x, i) => `<li class="${x.name === st.me ? 'me' : ''}">`
     + `<span class="r">${i + 1}</span><span class="n">${x.name}</span>`
-    + `<span class="v">${x.value}${x.unit ?? ''}</span></li>`;
-  const fill = (ol, list, unit) => {
-    ol.innerHTML = list.length
-      ? list.map((x, i) => row({ ...x, unit }, i)).join('')
-      : '<li class="empty">まだ記録がありません</li>';
-  };
-  fill(el.rankFast, r?.fastest ?? [], 'ms');
-  fill(el.rankStreak, r?.streak ?? [], '');
+    + `<span class="v">${x.value}ms</span></li>`;
+  el.rankFast.innerHTML = list.length
+    ? list.map(row).join('')
+    : '<li class="empty">まだ記録がありません</li>';
   const left = Math.max(0, (st.resetAt ?? 0) - Date.now());
   const h = Math.floor(left / 3600000), mi = Math.floor(left / 60000) % 60;
   el.resetIn.textContent = `記録は毎日 0 時にリセットされます（あと ${h}時間${mi}分）`;

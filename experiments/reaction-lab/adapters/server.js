@@ -160,8 +160,8 @@ export function startServer(options = {}) {
 
   /** 本人向けでも token は返さない */
   const publicDaily = (d) => ({
-    name: d.name, games: d.games, win: d.win, lose: d.lose, draw: d.draw, voided: d.voided,
-    bestR: d.bestR === null ? null : Math.round(d.bestR), streak: d.streak, bestStreak: d.bestStreak,
+    name: d.name, games: d.games, win: d.win, lose: d.lose,
+    bestR: d.bestR === null ? null : Math.round(d.bestR),
   });
 
   /** ページが必要とする「自分まわり」を一式返す。token は出さない */
@@ -227,13 +227,6 @@ export function startServer(options = {}) {
         res.writeHead(200, { ...headers, 'content-type': MIME['.json'] });
         res.end(JSON.stringify(mePayload(token, readToken(req) !== null)));
       });
-      return;
-    }
-
-    // 当日の全体集計。合計しか出さないので、誰がどうだったかは分からない
-    if (url.pathname === '/api/summary') {
-      res.writeHead(200, { ...headers, 'content-type': MIME['.json'] });
-      res.end(JSON.stringify(stats.summary()));
       return;
     }
 

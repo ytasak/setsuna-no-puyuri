@@ -31,13 +31,8 @@ const SCHEMA = `
     games        INTEGER NOT NULL DEFAULT 0,
     win          INTEGER NOT NULL DEFAULT 0,
     lose         INTEGER NOT NULL DEFAULT 0,
-    draw         INTEGER NOT NULL DEFAULT 0,
-    voided       INTEGER NOT NULL DEFAULT 0,
     bestR        REAL,
     bestRAt      TEXT,
-    streak       INTEGER NOT NULL DEFAULT 0,
-    bestStreak   INTEGER NOT NULL DEFAULT 0,
-    bestStreakAt TEXT,
     PRIMARY KEY (date, token)
   );
 `;
@@ -56,17 +51,17 @@ const DIAG_SCHEMA = `
   );
 `;
 
+// 列を名指しするので、以前のスキーマで作られた daily が Volume に残っていても動く。
+// 消えた列（draw / voided / streak / bestStreak / bestStreakAt）は
+// 既定値のまま置き去りになるだけで、読みにいかない。
 const UPSERT = `
   INSERT INTO daily
-    (date, token, name, games, win, lose, draw, voided, bestR, bestRAt, streak, bestStreak, bestStreakAt)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (date, token, name, games, win, lose, bestR, bestRAt)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(date, token) DO UPDATE SET
     name = excluded.name,
     games = excluded.games, win = excluded.win, lose = excluded.lose,
-    draw = excluded.draw, voided = excluded.voided,
-    bestR = excluded.bestR, bestRAt = excluded.bestRAt,
-    streak = excluded.streak,
-    bestStreak = excluded.bestStreak, bestStreakAt = excluded.bestStreakAt
+    bestR = excluded.bestR, bestRAt = excluded.bestRAt
 `;
 
 /** node:sqlite は undefined を受け取れない。null に寄せる */
@@ -130,9 +125,8 @@ export function openStatsStore(file, { enabled = true, log = console.warn } = {}
     save(s) {
       guard('保存', () => upsert.run(
         s.date, s.token, s.name,
-        s.games, s.win, s.lose, s.draw, s.voided,
+        s.games, s.win, s.lose,
         n(s.bestR), n(s.bestRAt),
-        s.streak, s.bestStreak, n(s.bestStreakAt),
       ));
     },
 

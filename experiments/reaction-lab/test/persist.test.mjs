@@ -23,9 +23,8 @@ test('閉じて開き直しても、保存した行がそのまま読める', ()
   const file = path.join(dir, 'stats.db');
   const row = {
     date: '2026-09-13', token: 'tok-1', name: '宵闇のぷゆ庵',
-    games: 3, win: 2, lose: 1, draw: 0, voided: 0,
+    games: 3, win: 2, lose: 1,
     bestR: 177.4, bestRAt: '2026-09-13T03:00:00.000Z',
-    streak: 2, bestStreak: 2, bestStreakAt: '2026-09-13T03:00:00.000Z',
   };
 
   const a = openStatsStore(file);
@@ -42,9 +41,9 @@ test('閉じて開き直しても、保存した行がそのまま読める', ()
 test('同じ (日付, token) は上書きされ、増えない', () => {
   const dir = tmp();
   const s = openStatsStore(path.join(dir, 'stats.db'));
-  const base = { date: '2026-09-13', token: 'tok-1', name: 'ぷゆ', games: 1, win: 1, lose: 0, draw: 0, voided: 0, bestR: 200, bestRAt: 'x', streak: 1, bestStreak: 1, bestStreakAt: 'x' };
+  const base = { date: '2026-09-13', token: 'tok-1', name: 'ぷゆ', games: 1, win: 1, lose: 0, bestR: 200, bestRAt: 'x' };
   s.save(base);
-  s.save({ ...base, games: 2, win: 2, bestR: 150, streak: 2, bestStreak: 2 });
+  s.save({ ...base, games: 2, win: 2, bestR: 150 });
 
   const rows = s.load('2026-09-13');
   assert.equal(rows.length, 1, '行が増えている');
@@ -57,7 +56,7 @@ test('同じ (日付, token) は上書きされ、増えない', () => {
 test('当日以外の行は掃除で消える', () => {
   const dir = tmp();
   const s = openStatsStore(path.join(dir, 'stats.db'));
-  const row = (date, token) => ({ date, token, name: 'ぷゆ', games: 1, win: 1, lose: 0, draw: 0, voided: 0, bestR: null, bestRAt: null, streak: 1, bestStreak: 1, bestStreakAt: null });
+  const row = (date, token) => ({ date, token, name: 'ぷゆ', games: 1, win: 1, lose: 0, bestR: null, bestRAt: null });
   s.save(row('2026-09-12', 'old'));
   s.save(row('2026-09-13', 'new'));
 
@@ -71,7 +70,7 @@ test('当日以外の行は掃除で消える', () => {
 test('bestR が null でも往復する', () => {
   const dir = tmp();
   const file = path.join(dir, 'stats.db');
-  const row = { date: '2026-09-13', token: 't', name: 'ぷゆ', games: 1, win: 0, lose: 0, draw: 0, voided: 1, bestR: null, bestRAt: null, streak: 0, bestStreak: 0, bestStreakAt: null };
+  const row = { date: '2026-09-13', token: 't', name: 'ぷゆ', games: 1, win: 0, lose: 1, bestR: null, bestRAt: null };
   const a = openStatsStore(file); a.save(row); a.close();
   const b = openStatsStore(file);
   assert.deepEqual(b.load('2026-09-13'), [row]);

@@ -224,13 +224,10 @@
   }
   #board h2 { font-family: var(--brush); font-size: clamp(19px, 5.6vmin, 30px); margin: 0; }
   #board .reset { font-size: clamp(10px, 2.7vmin, 12px); color: var(--muted); }
-  .lists { display: flex; gap: clamp(.9rem, 5vw, 2.6rem); flex-wrap: wrap; justify-content: center; }
-  .list { min-width: 8.5rem; }
-  .list h3 {
-    font-family: var(--brush); font-size: clamp(13px, 3.6vmin, 16px);
-    margin: 0 0 .35rem; color: #cbbdd6; font-weight: 400;
+  .list {
+    margin: 0; padding: 0; list-style: none; font-size: clamp(11px, 3vmin, 13px);
+    width: min(18rem, 100%);
   }
-  .list ol { margin: 0; padding: 0; list-style: none; font-size: clamp(11px, 3vmin, 13px); }
   .list li {
     display: flex; justify-content: space-between; gap: .7rem; padding: .16rem 0;
     font-variant-numeric: tabular-nums; border-bottom: 1px solid #201a2c;
@@ -450,11 +447,8 @@
     <div class="blade b3"></div>
     <div id="flash"></div>
     <div id="board" hidden>
-      <h2>きょうの記録</h2>
-      <div class="lists">
-        <div class="list"><h3>最速</h3><ol id="rankFast"></ol></div>
-        <div class="list"><h3>連勝</h3><ol id="rankStreak"></ol></div>
-      </div>
+      <h2>きょうの最速</h2>
+      <ol id="rankFast" class="list"></ol>
       <div class="reset" id="resetIn"></div>
       <button id="boardClose">閉じる</button>
     </div>
