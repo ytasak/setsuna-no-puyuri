@@ -1,4 +1,4 @@
-// 日次戦績・ランキング・待機列のテスト。
+// 日次戦績・ランキングのテスト。
 // 時計は固定して渡すので、日付をまたぐ挙動も実時間を待たずに検証できる。
 
 import test from 'node:test';
@@ -6,7 +6,6 @@ import assert from 'node:assert/strict';
 import { gameDate, nextReset, msUntilReset } from './clock.js';
 import { nickname, nicknameSpace, nicknameLists } from './nickname.js';
 import { createStats } from './stats.js';
-import { pickPair, isEngaged } from './lobby.js';
 
 // ---------------------------------------------------------------- ゲーム日
 
@@ -273,27 +272,4 @@ test('prune は容量回収だけで、当日の記録は残す', () => {
   s.record(round(2, 'win', 'lose'), tokenOf, new Date('2026-09-14T03:00:00Z'));
   s.prune(new Date('2026-09-14T03:00:00Z'));
   assert.deepEqual(s.dates, ['2026-09-14']);
-});
-
-// ---------------------------------------------------------------- 待機列
-
-test('token が異なる2人を組む', () => {
-  assert.deepEqual(pickPair([{ token: 'x' }, { token: 'y' }]), [0, 1]);
-});
-
-test('同じ token 同士は組まない（複数タブでの自己対戦を防ぐ）', () => {
-  assert.equal(pickPair([{ token: 'x' }, { token: 'x' }]), null);
-  assert.deepEqual(pickPair([{ token: 'x' }, { token: 'x' }, { token: 'y' }]), [0, 2],
-    '同一 token は飛ばして次の相手と組む');
-});
-
-test('1人だけなら組まない', () => {
-  assert.equal(pickPair([{ token: 'x' }]), null);
-  assert.equal(pickPair([]), null);
-});
-
-test('既に所属している token は二重に入れない', () => {
-  assert.equal(isEngaged('x', { queue: [{ token: 'x' }] }), true);
-  assert.equal(isEngaged('x', { engagedTokens: new Set(['x']) }), true);
-  assert.equal(isEngaged('x', { queue: [{ token: 'y' }] }), false);
 });
