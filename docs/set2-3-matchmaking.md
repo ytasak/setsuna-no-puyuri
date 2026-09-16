@@ -3,6 +3,11 @@
 > ステータス: **設計確定**
 > 対応チケット: [SET2-3](https://linear.app/setsuna-no-puyuri/issue/SET2-3)
 > 前提: [SET2-7](./set2-7-embed.md)（kusa は識別情報を渡さない）、[SET2-6 §3](./set2-6-stats-ranking.md)（Cookie identity）、[SET2-2](./set2-2-realtime-match.md)
+> ---
+> **⚠ この文書は歴史的記録。2026-09-16 にマルチプレイを廃止したので、本書の内容はもう動いていない。**
+> 待機列・ペア割り当て（`core/lobby.js`）・自己対戦の防止はすべて削除した。
+> 1 token = 1所属という制約も、束ねる対象が無くなったので消えている。
+> Cookie identity（SET2-6 §3）だけは戦績のために残っている。
 
 ## 1. 扱う範囲
 
